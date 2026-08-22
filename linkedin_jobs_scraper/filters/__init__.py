@@ -1,1 +1,1 @@
-from .filters import RelevanceFilters, TimeFilters, TypeFilters, ExperienceLevelFilters, OnSiteOrRemoteFilters, IndustryFilters, SalaryBaseFilters
+from .filters import RelevanceFilters, TimeFilters, TypeFilters, ExperienceLevelFilters, OnSiteOrRemoteFilters, IndustryFilters, SalaryBaseFilters, JobFunctionFilters, BenefitsFilters, CommitmentsFilters

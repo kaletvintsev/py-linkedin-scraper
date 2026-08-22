@@ -17,6 +17,9 @@ from .mapping import (
     EXPERIENCE_CHOICES,
     WORKPLACE_CHOICES,
     INDUSTRY_CHOICES,
+    JOB_FUNCTION_CHOICES,
+    BENEFITS_CHOICES,
+    COMMITMENTS_CHOICES,
 )
 
 PACKAGE_DISTRIBUTION_NAME = 'linkedin-jobs-scraper'
@@ -74,6 +77,11 @@ class CliConfig:
     experience: list[str] = field(default_factory=list)
     workplace: list[str] = field(default_factory=list)
     industry: list[str] = field(default_factory=list)
+    job_function: list[str] = field(default_factory=list)
+    benefits: list[str] = field(default_factory=list)
+    commitments: list[str] = field(default_factory=list)
+    easy_apply: bool = False
+    under_10_applicants: bool = False
 
     # job
     url_or_id: str = ''
@@ -184,6 +192,19 @@ def _add_search_arguments(parser: argparse.ArgumentParser) -> None:
     filters.add_argument('--industry', action=_comma_separated_choice_action(INDUSTRY_CHOICES),
                          default=None, metavar='INDUSTRY',
                          help=f'Industry, repeatable or comma-separated: {", ".join(INDUSTRY_CHOICES)}')
+    filters.add_argument('--job-function', action=_comma_separated_choice_action(JOB_FUNCTION_CHOICES),
+                         default=None, metavar='JOB_FUNCTION',
+                         help=f'Job function, repeatable or comma-separated: {", ".join(JOB_FUNCTION_CHOICES)}')
+    filters.add_argument('--benefits', action=_comma_separated_choice_action(BENEFITS_CHOICES),
+                         default=None, metavar='BENEFITS',
+                         help=f'Benefits, repeatable or comma-separated: {", ".join(BENEFITS_CHOICES)}')
+    filters.add_argument('--commitments', action=_comma_separated_choice_action(COMMITMENTS_CHOICES),
+                         default=None, metavar='COMMITMENTS',
+                         help=f'Commitments, repeatable or comma-separated: {", ".join(COMMITMENTS_CHOICES)}')
+    filters.add_argument('--easy-apply', action='store_true',
+                         help='Only jobs with LinkedIn Easy Apply')
+    filters.add_argument('--under-10-applicants', action='store_true',
+                         help='Only jobs with fewer than 10 applicants')
 
 
 def _add_scrape_job_arguments(parser: argparse.ArgumentParser) -> None:
@@ -280,6 +301,11 @@ def _namespace_to_config(namespace: argparse.Namespace) -> CliConfig:
         experience=list(getattr(namespace, 'experience', None) or []),
         workplace=list(getattr(namespace, 'workplace', None) or []),
         industry=list(getattr(namespace, 'industry', None) or []),
+        job_function=list(getattr(namespace, 'job_function', None) or []),
+        benefits=list(getattr(namespace, 'benefits', None) or []),
+        commitments=list(getattr(namespace, 'commitments', None) or []),
+        easy_apply=getattr(namespace, 'easy_apply', False),
+        under_10_applicants=getattr(namespace, 'under_10_applicants', False),
         url_or_id=getattr(namespace, 'url_or_id', ''),
     )
 

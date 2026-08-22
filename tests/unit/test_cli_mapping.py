@@ -17,6 +17,9 @@ from linkedin_jobs_scraper.cli.mapping import (
     EXPERIENCE_CHOICES,
     WORKPLACE_CHOICES,
     INDUSTRY_CHOICES,
+    JOB_FUNCTION_CHOICES,
+    BENEFITS_CHOICES,
+    COMMITMENTS_CHOICES,
     _member_to_kebab,
     build_locations,
     build_query,
@@ -33,6 +36,9 @@ from linkedin_jobs_scraper.filters import (
     OnSiteOrRemoteFilters,
     IndustryFilters,
     SalaryBaseFilters,
+    JobFunctionFilters,
+    BenefitsFilters,
+    CommitmentsFilters,
 )
 from linkedin_jobs_scraper.query import Location, Query, QueryFilters, QueryOptions
 
@@ -45,6 +51,9 @@ ENUM_CHOICE_CASES = [
     (OnSiteOrRemoteFilters, WORKPLACE_CHOICES, ''),
     (IndustryFilters, INDUSTRY_CHOICES, ''),
     (SalaryBaseFilters, SALARY_CHOICES, 'SALARY_'),
+    (JobFunctionFilters, JOB_FUNCTION_CHOICES, ''),
+    (BenefitsFilters, BENEFITS_CHOICES, ''),
+    (CommitmentsFilters, COMMITMENTS_CHOICES, ''),
 ]
 
 
@@ -79,6 +88,33 @@ def test_workplace_lands_in_on_site_or_remote() -> None:
     filters = build_query_filters(parse_args(['jobs', 'x', '--workplace', 'remote']))
     assert filters is not None
     assert filters.on_site_or_remote == [OnSiteOrRemoteFilters.REMOTE]
+
+
+def test_new_multi_value_filters_map_to_enums() -> None:
+    filters = build_query_filters(parse_args([
+        'jobs', 'x',
+        '--job-function', 'engineering,information-technology',
+        '--benefits', 'medical', '--benefits', 'vision',
+        '--commitments', 'work-life-balance',
+    ]))
+    assert filters is not None
+    assert filters.job_function == [
+        JobFunctionFilters.ENGINEERING, JobFunctionFilters.INFORMATION_TECHNOLOGY]
+    assert filters.benefits == [BenefitsFilters.MEDICAL, BenefitsFilters.VISION]
+    assert filters.commitments == [CommitmentsFilters.WORK_LIFE_BALANCE]
+
+
+def test_boolean_toggle_filters() -> None:
+    on = build_query_filters(parse_args([
+        'jobs', 'x', '--easy-apply', '--under-10-applicants']))
+    assert on is not None
+    assert on.easy_apply is True
+    assert on.under_10_applicants is True
+
+    off = build_query_filters(parse_args(['jobs', 'x', '--relevance', 'recent']))
+    assert off is not None
+    assert off.easy_apply is False
+    assert off.under_10_applicants is False
 
 
 def test_build_query_filters_returns_none_without_filters() -> None:

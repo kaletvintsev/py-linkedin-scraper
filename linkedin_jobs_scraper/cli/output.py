@@ -41,7 +41,9 @@ if TYPE_CHECKING:
 EXTENSION_FORMATS = {'.csv': 'csv', '.json': 'json', '.jsonl': 'jsonl'}
 DEFAULT_STRUCTURED_FORMAT = 'jsonl'
 
-TABLE_DEFAULT_FIELDS = ('title', 'company', 'place', 'date', 'link')
+TABLE_DEFAULT_FIELDS = (
+    'title', 'company', 'place', 'date', 'salary', 'is_easy_apply',
+    'applicant_count', 'benefits', 'reposted', 'link')
 TABLE_LIST_SEPARATOR = ', '
 STRUCTURED_LIST_SEPARATOR = '|'
 

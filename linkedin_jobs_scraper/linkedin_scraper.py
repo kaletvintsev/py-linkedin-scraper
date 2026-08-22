@@ -201,10 +201,33 @@ class LinkedinScraper:
                 params['f_I'] = filters
                 debug(tag, 'Applied industry filters', query.options.filters.industry)
 
-            if query.options.filters.on_site_or_remote is not None:
+            if len(query.options.filters.on_site_or_remote) > 0:
                 filters = ','.join(e.value for e in query.options.filters.on_site_or_remote)
                 params['f_WT'] = filters
                 debug(tag, 'Applied on-site/remote filter', query.options.filters.on_site_or_remote)
+
+            if len(query.options.filters.job_function) > 0:
+                filters = ','.join(e.value for e in query.options.filters.job_function)
+                params['f_F'] = filters
+                debug(tag, 'Applied job function filters', query.options.filters.job_function)
+
+            if len(query.options.filters.benefits) > 0:
+                filters = ','.join(e.value for e in query.options.filters.benefits)
+                params['f_BE'] = filters
+                debug(tag, 'Applied benefits filters', query.options.filters.benefits)
+
+            if len(query.options.filters.commitments) > 0:
+                filters = ','.join(e.value for e in query.options.filters.commitments)
+                params['f_JC'] = filters
+                debug(tag, 'Applied commitments filters', query.options.filters.commitments)
+
+            if query.options.filters.easy_apply:
+                params['f_AL'] = 'true'
+                debug(tag, 'Applied easy apply filter')
+
+            if query.options.filters.under_10_applicants:
+                params['f_EA'] = 'true'
+                debug(tag, 'Applied under 10 applicants filter')
 
             # Start offset
             params['start'] = '0'

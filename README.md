@@ -3,7 +3,7 @@
 
 * 🔑 **Session management**: long running session with auto recovery
 * 🐢 **Adaptive rate limiting**: auto adjust scraping speed to avoid rate limiting
-* 📄 **Fields parser**: `job_id`, `link`, `apply_link`, `title`, `company`, `company_link`, `company_employee_count`, `company_img_link`, `place`, `description`, `description_html`, `date`, `date_text`, `insights`
+* 📄 **Fields parser**: `job_id`, `link`, `apply_link`, `title`, `company`, `company_link`, `company_employee_count`, `company_img_link`, `place`, `description`, `description_html`, `date`, `date_text`, `insights`, `salary`, `is_easy_apply`, `applicant_count`, `benefits`, `reposted`
 * 🔍 **Filters**: relevance, time, type, experience, industry, salary, remote, company
 * 📡 **Events hooks**: data, metrics, errors
 * 🚀 **Headless support**: can run in background
@@ -116,8 +116,12 @@ Filters use kebab-case values. Single-valued: `--relevance {relevant,recent}`,
 `--company-jobs-url URL`. Repeatable or comma-separated: `--type` (`full-time`, `part-time`,
 `temporary`, `contract`, `internship`, `volunteer`, `other`), `--experience` (`internship`,
 `entry-level`, `associate`, `mid-senior`, `director`, `executive`), `--workplace` (`on-site`,
-`remote`, `hybrid`), `--industry` (e.g. `software-development`, `banking`, `it-services`). Run
-`lijs jobs --help` for the full list of industry values.
+`remote`, `hybrid`), `--industry` (e.g. `software-development`, `banking`, `it-services`),
+`--job-function` (e.g. `engineering`, `sales`, `information-technology`), `--benefits`
+(e.g. `medical`, `vision`, `dental`), `--commitments` (e.g. `work-life-balance`,
+`social-impact`). Boolean toggles: `--easy-apply` (only LinkedIn Easy Apply jobs),
+`--under-10-applicants` (only jobs with fewer than 10 applicants). Run
+`lijs jobs --help` for the full list of values.
 
 #### `job`
 Lookup a single job id or a `/jobs/view/<id>` url, with an optional `--apply-link`:
@@ -269,6 +273,20 @@ queries = [
 scraper.run(queries)
 ```
 
+#### Additional `EventData` fields
+
+Alongside the core fields, each `EventData` also carries:
+
+* `salary`: pay range when LinkedIn shows one (from the fit-level insight or the salary rail card), otherwise `''`.
+* `is_easy_apply`: `True` when the listing uses LinkedIn Easy Apply, `False` for an external apply flow.
+* `applicant_count`: the applicant segment of the top card (e.g. `'27 applicants'`), otherwise `''`.
+* `benefits`: list of featured benefit labels, empty when none are shown.
+* `reposted`: `True` when the listing was reposted (derived from the date text).
+
+`date` is an ISO `YYYY-MM-DD` string. It comes from the card's exact `<time datetime>` when
+available, otherwise it is approximated from the relative date text (weeks, months and years
+approximated at 7, 30 and 365 days), and is `''` only when no date text could be parsed.
+
 #### Scraping a single job
 
 When you already know the job you want, `scrape_job` fetches it directly by url or id, bypassing
@@ -317,8 +335,8 @@ scraper.scrape_job('4455383771', apply_link=True)
 ```
 
 The single-job path reads every field from the job detail panel, so a few card-only fields are not
-populated: `date` (the ISO datetime), `company_img_link`, and the promoted flag. The human-readable
-date is still available on `date_text`. `query`, `location` are empty and `job_index` is `-1`, as
+populated: `company_img_link` and the promoted flag. `date` has no exact `<time datetime>` here, so
+it is approximated from `date_text`. `query`, `location` are empty and `job_index` is `-1`, as
 there is no search context.
 
 ### Pinning a location by geoId
@@ -561,6 +579,54 @@ It is possible to customize queries with the following filters:
     * `SALARY_160K`
     * `SALARY_180K`
     * `SALARY_200K`
+- JOB FUNCTION:
+    * `ACCOUNTING_AUDITING`
+    * `ADMINISTRATIVE`
+    * `ADVERTISING`
+    * `BUSINESS_DEVELOPMENT`
+    * `CONSULTING`
+    * `DISTRIBUTION`
+    * `DESIGN`
+    * `EDUCATION`
+    * `ENGINEERING`
+    * `FINANCE`
+    * `GENERAL_BUSINESS`
+    * `HEALTH_CARE_PROVIDER`
+    * `HUMAN_RESOURCES`
+    * `INFORMATION_TECHNOLOGY`
+    * `LEGAL`
+    * `MANAGEMENT`
+    * `MANUFACTURING`
+    * `MARKETING`
+    * `OTHER`
+    * `PUBLIC_RELATIONS`
+    * `PRODUCT_MANAGEMENT`
+    * `PROJECT_MANAGEMENT`
+    * `QUALITY_ASSURANCE`
+    * `RESEARCH`
+    * `SALES`
+    * `SUPPLY_CHAIN`
+    * `TRAINING`
+- BENEFITS:
+    * `MEDICAL`
+    * `VISION`
+    * `DENTAL`
+    * `RETIREMENT_401K`
+    * `PENSION_PLAN`
+    * `PAID_MATERNITY_LEAVE`
+    * `PAID_PATERNITY_LEAVE`
+    * `COMMUTER_BENEFITS`
+    * `STUDENT_LOAN_ASSISTANCE`
+    * `TUITION_ASSISTANCE`
+    * `DISABILITY_INSURANCE`
+- COMMITMENTS:
+    * `DIVERSITY_EQUITY_INCLUSION`
+    * `ENVIRONMENTAL_SUSTAINABILITY`
+    * `WORK_LIFE_BALANCE`
+    * `SOCIAL_IMPACT`
+    * `CAREER_GROWTH_AND_LEARNING`
+- EASY APPLY: `easy_apply=True` restricts results to jobs with LinkedIn Easy Apply.
+- UNDER 10 APPLICANTS: `under_10_applicants=True` restricts results to jobs with fewer than 10 applicants.
 - COMPANY:
     * See below
     
@@ -569,7 +635,7 @@ See the following example for more details:
 ```python
 from linkedin_jobs_scraper.query import Query, QueryOptions, QueryFilters
 from linkedin_jobs_scraper.filters import RelevanceFilters, TimeFilters, TypeFilters, ExperienceLevelFilters, \
-    OnSiteOrRemoteFilters, IndustryFilters, SalaryBaseFilters
+    OnSiteOrRemoteFilters, IndustryFilters, SalaryBaseFilters, JobFunctionFilters, BenefitsFilters, CommitmentsFilters
 query = Query(
     query='Engineer',
     options=QueryOptions(
@@ -584,7 +650,12 @@ query = Query(
             experience=[ExperienceLevelFilters.INTERNSHIP, ExperienceLevelFilters.MID_SENIOR],
             on_site_or_remote=[OnSiteOrRemoteFilters.REMOTE],
             industry=[IndustryFilters.IT_SERVICES],
-            base_salary=SalaryBaseFilters.SALARY_100K
+            base_salary=SalaryBaseFilters.SALARY_100K,
+            job_function=[JobFunctionFilters.ENGINEERING],
+            benefits=[BenefitsFilters.MEDICAL, BenefitsFilters.VISION],
+            commitments=[CommitmentsFilters.WORK_LIFE_BALANCE],
+            easy_apply=True,
+            under_10_applicants=True
         )
     )
 )

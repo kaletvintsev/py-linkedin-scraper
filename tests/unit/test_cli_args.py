@@ -40,6 +40,32 @@ def test_full_search_line_produces_expected_config() -> None:
     assert config.workplace == ['remote']
 
 
+def test_new_filter_flags_parse_into_config() -> None:
+    config = parse_args([
+        'jobs', 'python',
+        '--job-function', 'engineering,information-technology',
+        '--benefits', 'medical', '--benefits', 'vision',
+        '--commitments', 'work-life-balance',
+        '--easy-apply',
+        '--under-10-applicants',
+    ])
+
+    assert config.job_function == ['engineering', 'information-technology']
+    assert config.benefits == ['medical', 'vision']
+    assert config.commitments == ['work-life-balance']
+    assert config.easy_apply is True
+    assert config.under_10_applicants is True
+
+
+def test_new_filter_flags_default_empty_and_false() -> None:
+    config = parse_args(['jobs', 'python'])
+    assert config.job_function == []
+    assert config.benefits == []
+    assert config.commitments == []
+    assert config.easy_apply is False
+    assert config.under_10_applicants is False
+
+
 def test_location_and_geo_id_are_mutually_exclusive() -> None:
     with pytest.raises(SystemExit) as exc_info:
         parse_args(['jobs', 'python', '--location', 'X', '--geo-id', '123'])

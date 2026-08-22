@@ -55,6 +55,11 @@ class EventData(NamedTuple):
     date: str = ''
     date_text: str = ''
     insights: List[str] = []
+    salary: str = ''
+    is_easy_apply: bool = False
+    applicant_count: str = ''
+    benefits: List[str] = []
+    reposted: bool = False
 
 
 class EventMetrics:

@@ -1,4 +1,5 @@
 import traceback
+from datetime import datetime
 from random import uniform
 from typing import NamedTuple
 from selenium import webdriver
@@ -16,7 +17,8 @@ from ..utils.session import (REMEMBER_COOKIE_NAME, SESSION_COOKIE_NAME, get_cook
                              is_on_linkedin, set_remember_me_cookies, set_session_cookie,
                              wait_for_linkedin)
 from ..utils.url import override_query_params
-from ..utils.text import normalize_spaces
+from ..utils.text import normalize_spaces, clean_applicant_count
+from ..utils.dates import parse_relative_date
 from ..events import Events, EventData, EventMetrics, EventBegin, EventNotFound
 from ..exceptions import InvalidCookieException
 
@@ -109,11 +111,61 @@ class Selectors(NamedTuple):
     description = '.jobs-description'
     detailsPanel = '.jobs-search__job-details--container'
     insights = '.job-details-fit-level-preferences button'
+    salary_rail_card = '.jobs-details__salary-main-rail-card'
+    apply_button = 'button.jobs-apply-button'
+    benefits = '.featured-benefits__benefit'
     globalAlertDismissBtn = 'button.artdeco-global-alert__dismiss'
     appShell = '.scaffold-layout, .global-nav'
     signInForm = 'form.login__form, input#username, input#password, form[action*="login-submit"]'
     guestMarkers = '.authwall, #artdeco-global-alert-container .artdeco-global-alert--eu-cookie-consent, ' \
                    '.guest-homepage, form.login__form, .base-serp-page'
+
+
+# Extracts salary, easy-apply flag, applicant count and benefits from the detail panel in
+# a single evaluation. Selectors are passed positionally: [0] fit-level buttons,
+# [1] salary rail card, [2] apply button, [3] tertiary description container, [4] benefits.
+EXTRACT_EXTRA_FIELDS_SCRIPT = r'''
+    const moneyRe = /(\$|€|£|₹)\s?\d|\/(yr|hr)\b|per (year|hour)|K\/(yr|hr)/i;
+
+    // Prefer the first fit-level button when it reads as money, else the salary rail card
+    const fit = [...document.querySelectorAll(arguments[0])].map(b => b.innerText.trim()).filter(Boolean);
+    let salary = (fit[0] && moneyRe.test(fit[0])) ? fit[0] : '';
+
+    if (!salary) {
+        const card = document.querySelector(arguments[1]);
+
+        if (card) {
+            const m = card.innerText.match(/[^\n]*(?:\$|€|£|₹)[^\n]*/);
+            if (m) salary = m[0].trim();
+        }
+    }
+
+    // Easy Apply keeps the applicant on LinkedIn; the aria-label/text discriminates it
+    // from an external apply button
+    const applyBtn = document.querySelector(arguments[2]);
+    const isEasyApply = !!applyBtn &&
+        /easy apply/i.test(((applyBtn.getAttribute('aria-label') || '') + ' ' + (applyBtn.innerText || '')));
+
+    // The tertiary container reads "<place> · <date> · <applicants>", any segment may be
+    // absent, so the applicant segment is matched by shape rather than by position
+    let applicantCount = '';
+    const tertiary = document.querySelector(arguments[3]);
+
+    if (tertiary) {
+        const segments = tertiary.innerText
+            .split('·')
+            .map(e => e.replace(/[\n\r\t ]+/g, ' ').trim())
+            .filter(e => e.length);
+
+        applicantCount = segments.find(e => /applicant|clicked apply/i.test(e)) || '';
+    }
+
+    const benefits = [...document.querySelectorAll(arguments[4])]
+        .map(e => e.textContent.trim())
+        .filter(Boolean);
+
+    return [salary, isEasyApply, applicantCount, benefits];
+'''
 
 
 def get_job_item_selector(job_id: str) -> str:
@@ -1428,6 +1480,30 @@ class AuthenticatedStrategy(Strategy):
             ''',
             Selectors.insights)
 
+        # Extract salary, easy-apply flag, applicant count and benefits
+        debug(tag, 'Evaluating selectors', [
+            Selectors.insights,
+            Selectors.salary_rail_card,
+            Selectors.apply_button,
+            Selectors.date_text,
+            Selectors.benefits])
+
+        job_salary, job_is_easy_apply, job_applicant_count, job_benefits = \
+            driver.execute_script(EXTRACT_EXTRA_FIELDS_SCRIPT,
+                                  Selectors.insights,
+                                  Selectors.salary_rail_card,
+                                  Selectors.apply_button,
+                                  Selectors.date_text,
+                                  Selectors.benefits)
+
+        job_salary = normalize_spaces(job_salary)
+        job_applicant_count = clean_applicant_count(job_applicant_count)
+
+        # The panel exposes no machine date, so the ISO date is approximated from the
+        # relative date text; a reposted listing is flagged in that same text
+        job_reposted = 'reposted' in job_date_text.lower()
+        job_date = parse_relative_date(job_date_text, datetime.now())
+
         # Apply link
         job_apply_link = ''
 
@@ -1448,13 +1524,18 @@ class AuthenticatedStrategy(Strategy):
             company_employee_count=job_company_employee_count,
             company_img_link='',
             place=job_place,
-            date='',
+            date=job_date,
             date_text=job_date_text,
             link=job_link,
             apply_link=job_apply_link,
             description=job_description,
             description_html=job_description_html,
-            insights=job_insights)
+            insights=job_insights,
+            salary=job_salary,
+            is_easy_apply=job_is_easy_apply,
+            applicant_count=job_applicant_count,
+            benefits=job_benefits,
+            reposted=job_reposted)
 
         info(tag, 'Processed')
 
@@ -1837,6 +1918,33 @@ class AuthenticatedStrategy(Strategy):
                         ''',
                         Selectors.insights)
 
+                    # Extract salary, easy-apply flag, applicant count and benefits
+                    debug(tag, 'Evaluating selectors', [
+                        Selectors.insights,
+                        Selectors.salary_rail_card,
+                        Selectors.apply_button,
+                        Selectors.date_text,
+                        Selectors.benefits])
+
+                    job_salary, job_is_easy_apply, job_applicant_count, job_benefits = \
+                        driver.execute_script(EXTRACT_EXTRA_FIELDS_SCRIPT,
+                                              Selectors.insights,
+                                              Selectors.salary_rail_card,
+                                              Selectors.apply_button,
+                                              Selectors.date_text,
+                                              Selectors.benefits)
+
+                    job_salary = normalize_spaces(job_salary)
+                    job_applicant_count = clean_applicant_count(job_applicant_count)
+
+                    # A reposted listing is flagged in the date text; the card's <time>
+                    # datetime is authoritative when present, otherwise the ISO date is
+                    # approximated from the relative date text
+                    job_reposted = 'reposted' in job_date_text.lower()
+
+                    if not job_date:
+                        job_date = parse_relative_date(job_date_text, datetime.now())
+
                     # Apply link
                     job_apply_link = ''
 
@@ -1863,7 +1971,12 @@ class AuthenticatedStrategy(Strategy):
                         apply_link=job_apply_link,
                         description=job_description,
                         description_html=job_description_html,
-                        insights=job_insights)
+                        insights=job_insights,
+                        salary=job_salary,
+                        is_easy_apply=job_is_easy_apply,
+                        applicant_count=job_applicant_count,
+                        benefits=job_benefits,
+                        reposted=job_reposted)
 
                     info(tag, 'Processed')
 

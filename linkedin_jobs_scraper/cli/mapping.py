@@ -16,6 +16,9 @@ from ..filters import (
     OnSiteOrRemoteFilters,
     IndustryFilters,
     SalaryBaseFilters,
+    JobFunctionFilters,
+    BenefitsFilters,
+    CommitmentsFilters,
 )
 from ..query import Query, QueryOptions, QueryFilters, Location
 
@@ -43,6 +46,9 @@ TYPE_CHOICES = _kebab_map(TypeFilters)
 EXPERIENCE_CHOICES = _kebab_map(ExperienceLevelFilters)
 WORKPLACE_CHOICES = _kebab_map(OnSiteOrRemoteFilters)
 INDUSTRY_CHOICES = _kebab_map(IndustryFilters)
+JOB_FUNCTION_CHOICES = _kebab_map(JobFunctionFilters)
+BENEFITS_CHOICES = _kebab_map(BenefitsFilters)
+COMMITMENTS_CHOICES = _kebab_map(CommitmentsFilters)
 
 
 def build_scraper_kwargs(config: CliConfig) -> dict[str, Any]:
@@ -101,6 +107,16 @@ def build_query_filters(config: CliConfig) -> QueryFilters | None:
         kwargs['on_site_or_remote'] = [WORKPLACE_CHOICES[token] for token in config.workplace]
     if config.industry:
         kwargs['industry'] = [INDUSTRY_CHOICES[token] for token in config.industry]
+    if config.job_function:
+        kwargs['job_function'] = [JOB_FUNCTION_CHOICES[token] for token in config.job_function]
+    if config.benefits:
+        kwargs['benefits'] = [BENEFITS_CHOICES[token] for token in config.benefits]
+    if config.commitments:
+        kwargs['commitments'] = [COMMITMENTS_CHOICES[token] for token in config.commitments]
+    if config.easy_apply:
+        kwargs['easy_apply'] = True
+    if config.under_10_applicants:
+        kwargs['under_10_applicants'] = True
 
     if not kwargs:
         return None

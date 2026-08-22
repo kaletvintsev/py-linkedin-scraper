@@ -32,6 +32,11 @@ def on_data(data: EventData):
     assert isinstance(data.date, str)
 
     assert isinstance(data.insights, list)
+    assert isinstance(data.salary, str)
+    assert isinstance(data.is_easy_apply, bool)
+    assert isinstance(data.applicant_count, str)
+    assert isinstance(data.benefits, list)
+    assert isinstance(data.reposted, bool)
 
     assert len(data.location) > 0
     assert len(data.job_id) > 0
@@ -71,6 +76,11 @@ def on_single_job_data(data: EventData):
     assert isinstance(data.date, str)
 
     assert isinstance(data.insights, list)
+    assert isinstance(data.salary, str)
+    assert isinstance(data.is_easy_apply, bool)
+    assert isinstance(data.applicant_count, str)
+    assert isinstance(data.benefits, list)
+    assert isinstance(data.reposted, bool)
 
     assert len(data.job_id) > 0
     assert len(data.title) > 0
