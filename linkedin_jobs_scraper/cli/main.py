@@ -73,9 +73,14 @@ def _dispatch(config: CliConfig, writer: Writer, feedback: Feedback, spinner: Sp
             feedback.set_location_labels(describe_locations(config))
             spinner.start('starting…')
             scraper.run(build_query(config))
-        else:
+        elif config.subcommand == 'job':
             spinner.start('loading job…')
             scraper.scrape_job(config.url_or_id, apply_link=config.apply_link)
+        elif config.subcommand == 'profile':
+            spinner.start('loading profile…')
+            scraper.scrape_profile(config.url_or_id)
+        else:
+            raise ValueError(f'Unsupported subcommand: {config.subcommand}')
     finally:
         writer.end()
         spinner.stop()

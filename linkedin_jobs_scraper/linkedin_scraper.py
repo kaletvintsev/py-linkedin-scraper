@@ -5,7 +5,8 @@ from urllib.parse import urlparse, urlencode
 from typing import Union, Callable, List
 from selenium.webdriver.chrome.options import Options
 from .utils.logger import debug, info, warn, error
-from .utils.url import get_query_params, get_domain, get_url_no_query_params, get_job_id
+from .utils.url import (get_query_params, get_domain, get_url_no_query_params, get_job_id,
+                        get_profile_public_id)
 from .utils.chrome_driver import build_driver
 from .utils.pacing import Pacer, MIN_SLOW_MO, PACING_CEILING_FACTOR, PACING_CEILING_LIMIT
 from .utils.session import get_session_cookie, is_on_linkedin, wait_for_linkedin
@@ -123,6 +124,8 @@ class LinkedinScraper:
             Events.SESSION_REFRESHED: [],
             Events.NOT_FOUND: [],
             Events.END: [],
+            Events.PROFILE: [],
+            Events.PROFILE_NOT_FOUND: [],
         }
 
         # Every run authenticates, so there is one strategy and it is built unconditionally.
@@ -371,6 +374,43 @@ class LinkedinScraper:
             error(tag, e)
             self.emit(Events.ERROR, str(e) + '\n' + traceback.format_exc())
 
+    def scrape_profile(self, url_or_id: str) -> None:
+        """Scrape a single member profile by public id or ``/in/`` URL."""
+        public_id = get_profile_public_id(url_or_id)
+        tag = f'[profile:{public_id}]'
+        info('Starting profile scrape', public_id)
+
+        if self.interactive_login and not ensure_session(
+                self.chrome_user_data_dir, self.chrome_executable_path, self.chrome_binary_location):
+            raise RuntimeError('Interactive login did not establish a session, nothing to scrape with')
+
+        try:
+            driver = build_driver(
+                executable_path=self.chrome_executable_path,
+                binary_location=self.chrome_binary_location,
+                options=self.chrome_options,
+                headless=self.headless,
+                chrome_user_data_dir=self.chrome_user_data_dir,
+                timeout=self.page_load_timeout)
+            try:
+                self._strategy.scrape_profile(driver, public_id)
+                self.__emit_refreshed_session(driver)
+            finally:
+                try:
+                    debug(tag, 'Closing driver')
+                    driver.quit()
+                except BaseException:
+                    pass
+        except CallbackException as e:
+            error(tag, e)
+            raise e
+        except InvalidCookieException as e:
+            error(tag, e)
+            raise e
+        except BaseException as e:
+            error(tag, e)
+            self.emit(Events.ERROR, str(e) + '\n' + traceback.format_exc())
+
     def run(self, queries: Union[Query, List[Query]], options: QueryOptions = None) -> None:
         """
         Run a query or a list of queries
@@ -427,7 +467,9 @@ class LinkedinScraper:
         if not callable(cb):
             raise ValueError('Callback must be callable')
 
-        if event in (Events.DATA, Events.ERROR, Events.METRICS, Events.SESSION_REFRESHED, Events.BEGIN, Events.NOT_FOUND):
+        if event in (Events.DATA, Events.PROFILE, Events.ERROR, Events.METRICS,
+                     Events.SESSION_REFRESHED, Events.BEGIN, Events.NOT_FOUND,
+                     Events.PROFILE_NOT_FOUND):
             allowed_params = 1
         else:
             allowed_params = 0

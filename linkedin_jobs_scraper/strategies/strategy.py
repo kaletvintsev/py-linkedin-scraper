@@ -23,3 +23,6 @@ class Strategy:
         apply_link: bool = False
     ) -> None:
         raise NotImplementedError('Must implement method in subclass')
+
+    def scrape_profile(self, driver: webdriver, public_id: str) -> None:
+        raise NotImplementedError('Must implement method in subclass')

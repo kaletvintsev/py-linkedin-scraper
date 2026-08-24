@@ -19,7 +19,8 @@ from ..utils.session import (REMEMBER_COOKIE_NAME, SESSION_COOKIE_NAME, get_cook
 from ..utils.url import override_query_params
 from ..utils.text import normalize_spaces, clean_applicant_count
 from ..utils.dates import parse_relative_date
-from ..events import Events, EventData, EventMetrics, EventBegin, EventNotFound
+from ..events import (Events, EventData, EventMetrics, EventBegin, EventNotFound,
+                      EventProfileNotFound, ProfileData)
 from ..exceptions import InvalidCookieException
 
 
@@ -88,6 +89,7 @@ CONTAINER_WAIT_TIMEOUT = 15
 # shorter than the quiet period, so it never settles on the placeholder.
 SINGLE_JOB_PANEL_TIMEOUT = 15
 SINGLE_JOB_PANEL_QUIET_PERIOD = 1
+PROFILE_WAIT_TIMEOUT = 15
 
 
 class Selectors(NamedTuple):
@@ -119,6 +121,17 @@ class Selectors(NamedTuple):
     signInForm = 'form.login__form, input#username, input#password, form[action*="login-submit"]'
     guestMarkers = '.authwall, #artdeco-global-alert-container .artdeco-global-alert--eu-cookie-consent, ' \
                    '.guest-homepage, form.login__form, .base-serp-page'
+
+
+class ProfileSelectors(NamedTuple):
+    main = 'main'
+    name = 'main h1'
+    headline = 'main .text-body-medium'
+    location = 'main .text-body-small.inline, main .text-body-small:not(.break-words)'
+    avatar = 'main img.pv-top-card-profile-picture__image--show, main img.profile-photo-edit__preview'
+    about = 'section:has(#about) .display-flex.ph5.pv3, section:has(#about) .inline-show-more-text'
+    experience = 'section:has(#experience) li.artdeco-list__item'
+    education = 'section:has(#education) li.artdeco-list__item'
 
 
 # Extracts salary, easy-apply flag, applicant count and benefits from the detail panel in
@@ -1540,6 +1553,95 @@ class AuthenticatedStrategy(Strategy):
         info(tag, 'Processed')
 
         self.scraper.emit(Events.DATA, data)
+
+    def scrape_profile(self, driver: webdriver, public_id: str) -> None:
+        """Scrape one member profile by its public ``/in/`` identifier."""
+        tag = f'[profile:{public_id}]'
+        profile_link = f'https://www.linkedin.com/in/{public_id}/'
+
+        debug(tag, f'Opening {HOME_URL}')
+        driver.get(HOME_URL)
+        sleep(self.scraper.pacer.delay)
+
+        if not wait_for_linkedin(driver):
+            warn(tag, 'The browser never landed on LinkedIn, skip')
+            return
+
+        mask_headless_user_agent(driver)
+        has_profile = bool(self.scraper.chrome_user_data_dir)
+        if has_profile:
+            AuthenticatedStrategy.__wait_for_session(driver)
+        if not AuthenticatedStrategy.__is_authenticated_session(driver):
+            if not AuthenticatedStrategy.__authenticate(driver, tag, has_profile):
+                return
+
+        def wait_for_profile(current_driver: webdriver) -> bool:
+            try:
+                WebDriverWait(current_driver, PROFILE_WAIT_TIMEOUT).until(
+                    ec.presence_of_element_located((By.CSS_SELECTOR, ProfileSelectors.name)))
+                return True
+            except BaseException:
+                return False
+
+        if not self.__open_and_wait(driver, tag, profile_link, wait_for_profile):
+            if AuthenticatedStrategy.__is_throttled(driver) or not is_on_linkedin(driver):
+                warn(tag, f'Could not load profile {public_id}, skip')
+                return
+            if (AuthenticatedStrategy.__is_session_lost(driver) or
+                    AuthenticatedStrategy.__is_guest_page(driver)):
+                warn(tag, 'The LinkedIn session is no longer accepted')
+                self.scraper.emit(Events.INVALID_SESSION)
+                return
+            warn(tag, f'Profile {public_id} not found or unavailable')
+            self.scraper.emit(
+                Events.PROFILE_NOT_FOUND,
+                EventProfileNotFound(public_id=public_id))
+            return
+
+        values = driver.execute_script(
+            r'''
+                const text = selector => {
+                    const element = document.querySelector(selector);
+                    return element ? element.innerText.trim() : "";
+                };
+                const rows = selector => [...document.querySelectorAll(selector)]
+                    .map(element => element.innerText.replace(/[\n\r\t ]+/g, " ").trim())
+                    .filter(Boolean);
+                const avatar = document.querySelector(arguments[4]);
+                return [
+                    text(arguments[0]), text(arguments[1]), text(arguments[2]),
+                    text(arguments[3]), avatar ? (avatar.src || "") : "",
+                    rows(arguments[5]), rows(arguments[6])
+                ];
+            ''',
+            ProfileSelectors.name,
+            ProfileSelectors.headline,
+            ProfileSelectors.location,
+            ProfileSelectors.about,
+            ProfileSelectors.avatar,
+            ProfileSelectors.experience,
+            ProfileSelectors.education)
+
+        name, headline, location, about, avatar_url, experience, education = values
+        experience = [normalize_spaces(item) for item in experience]
+        education = [normalize_spaces(item) for item in education]
+
+        # The first experience entry is the best stable approximation available in the
+        # rendered page without depending on LinkedIn's private API.
+        current_company = experience[0] if experience else ''
+        data = ProfileData(
+            public_id=public_id,
+            link=profile_link,
+            name=normalize_spaces(name),
+            headline=normalize_spaces(headline),
+            location=normalize_spaces(location),
+            about=normalize_spaces(about),
+            avatar_url=avatar_url,
+            current_company=current_company,
+            experience=experience,
+            education=education)
+        info(tag, 'Processed')
+        self.scraper.emit(Events.PROFILE, data)
 
     def run(
         self,

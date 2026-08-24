@@ -12,6 +12,8 @@ class Events(Enum):
     INVALID_SESSION = 'scraper:invalid-session'
     SESSION_REFRESHED = 'scraper:session-refreshed'
     NOT_FOUND = 'scraper:not-found'
+    PROFILE = 'scraper:profile'
+    PROFILE_NOT_FOUND = 'scraper:profile-not-found'
 
 
 class EventSession(NamedTuple):
@@ -35,6 +37,25 @@ class EventNotFound(NamedTuple):
     """Emitted when a single-job scrape targets a job that does not exist or is no longer
     available."""
     job_id: str = ''
+
+
+class EventProfileNotFound(NamedTuple):
+    """Emitted when a requested public LinkedIn profile cannot be found."""
+    public_id: str = ''
+
+
+class ProfileData(NamedTuple):
+    """Public fields extracted from a LinkedIn member profile."""
+    public_id: str = ''
+    link: str = ''
+    name: str = ''
+    headline: str = ''
+    location: str = ''
+    about: str = ''
+    avatar_url: str = ''
+    current_company: str = ''
+    experience: List[str] = []
+    education: List[str] = []
 
 
 class EventData(NamedTuple):

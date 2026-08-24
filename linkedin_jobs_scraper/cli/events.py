@@ -9,7 +9,8 @@ from __future__ import annotations
 import sys
 from typing import TextIO, TYPE_CHECKING
 
-from ..events import Events, EventBegin, EventMetrics, EventNotFound, EventSession
+from ..events import (Events, EventBegin, EventMetrics, EventNotFound,
+                      EventProfileNotFound, EventSession)
 from .color import Colorizer, color_enabled
 from .mapping import describe_locations
 from .output import Writer
@@ -116,9 +117,10 @@ class Feedback:
         """Print a compact, aligned summary of what is about to run, to the diagnostics stream."""
         if self._quiet:
             return
-        if config.subcommand == 'job':
-            self._println(self._title(f'job {config.url_or_id}'))
-            self._println(self._row('options', f'apply-link={self._on_off(config.apply_link)}'))
+        if config.subcommand in ('job', 'profile'):
+            self._println(self._title(f'{config.subcommand} {config.url_or_id}'))
+            if config.subcommand == 'job':
+                self._println(self._row('options', f'apply-link={self._on_off(config.apply_link)}'))
             self._println(self._row('driver', self._format_driver(config)))
             return
 
@@ -168,6 +170,11 @@ class Feedback:
         self.not_found = True
         self._println('⚠️ ' + self._color.yellow(f'job not found: {not_found.job_id}'))
 
+    def on_profile_not_found(self, not_found: EventProfileNotFound) -> None:
+        self.not_found = True
+        self._println('⚠️ ' + self._color.yellow(
+            f'profile not found: {not_found.public_id}'))
+
     def on_invalid_session(self) -> None:
         self.invalid_session = True
         self._println('❌ ' + self._color.red('error: session invalid or refused'))
@@ -192,10 +199,12 @@ def create_feedback(config: 'CliConfig', spinner: Spinner) -> Feedback:
 def register_events(scraper: 'LinkedinScraper', writer: Writer, feedback: Feedback) -> None:
     """Route DATA to the output writer and every lifecycle event to the feedback object."""
     scraper.on(Events.DATA, lambda data: writer.write(data))
+    scraper.on(Events.PROFILE, lambda data: writer.write(data))
     scraper.on(Events.BEGIN, feedback.on_begin)
     scraper.on(Events.METRICS, feedback.on_metrics)
     scraper.on(Events.ERROR, feedback.on_error)
     scraper.on(Events.SESSION_REFRESHED, feedback.on_session_refreshed)
     scraper.on(Events.NOT_FOUND, feedback.on_not_found)
+    scraper.on(Events.PROFILE_NOT_FOUND, feedback.on_profile_not_found)
     scraper.on(Events.INVALID_SESSION, feedback.on_invalid_session)
     scraper.on(Events.END, feedback.on_end)

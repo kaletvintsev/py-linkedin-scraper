@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, TextIO, TYPE_CHECKING
 from urllib.parse import urlsplit
 
-from ..events import EventData
+from ..events import EventData, ProfileData
 from .color import (
     ANSI_BLUE,
     ANSI_BOLD,
@@ -44,6 +44,8 @@ DEFAULT_STRUCTURED_FORMAT = 'jsonl'
 TABLE_DEFAULT_FIELDS = (
     'title', 'company', 'place', 'date', 'salary', 'is_easy_apply',
     'applicant_count', 'benefits', 'reposted', 'link')
+PROFILE_TABLE_DEFAULT_FIELDS = (
+    'name', 'headline', 'location', 'current_company', 'link')
 TABLE_LIST_SEPARATOR = ', '
 STRUCTURED_LIST_SEPARATOR = '|'
 
@@ -139,7 +141,8 @@ def resolve_format(config: 'CliConfig') -> str:
 
 def resolve_fields(config: 'CliConfig', output_format: str) -> list[str]:
     """Resolve the ordered list of fields to emit for the given format."""
-    available = list(EventData._fields)
+    record_type = ProfileData if config.subcommand == 'profile' else EventData
+    available = list(record_type._fields)
 
     if config.fields:
         for name in config.fields:
@@ -153,7 +156,8 @@ def resolve_fields(config: 'CliConfig', output_format: str) -> list[str]:
         return available
 
     if output_format == 'table':
-        return list(TABLE_DEFAULT_FIELDS)
+        return list(PROFILE_TABLE_DEFAULT_FIELDS if config.subcommand == 'profile'
+                    else TABLE_DEFAULT_FIELDS)
 
     return available
 
@@ -204,7 +208,7 @@ class Writer:
         """Open the destination and emit any preamble."""
         raise NotImplementedError
 
-    def write(self, data: EventData) -> None:
+    def write(self, data: Any) -> None:
         """Emit a single record."""
         raise NotImplementedError
 
@@ -238,7 +242,7 @@ class _FileBackedWriter(Writer):
             self._stream.close()
         self._stream = None
 
-    def _record(self, data: EventData) -> dict[str, Any]:
+    def _record(self, data: Any) -> dict[str, Any]:
         """Project the event onto the selected fields with preprocessing applied."""
         source = data._asdict()
         return {name: _prepare_value(source[name], self._raw) for name in self._fields}
@@ -250,7 +254,7 @@ class JsonlWriter(_FileBackedWriter):
     def begin(self) -> None:
         self._open()
 
-    def write(self, data: EventData) -> None:
+    def write(self, data: Any) -> None:
         assert self._stream is not None
         with self._spinner.pause():
             self._stream.write(json.dumps(self._record(data), ensure_ascii=False))
@@ -275,7 +279,7 @@ class JsonWriter(_FileBackedWriter):
         self._first = True
         self._stream.write('[')
 
-    def write(self, data: EventData) -> None:
+    def write(self, data: Any) -> None:
         assert self._stream is not None
         text = json.dumps(self._record(data), ensure_ascii=False, indent=2)
         indented = '\n'.join('  ' + line for line in text.split('\n'))
@@ -306,7 +310,7 @@ class CsvWriter(_FileBackedWriter):
         self._csv_writer = csv.writer(self._stream)
         self._csv_writer.writerow(self._fields)
 
-    def write(self, data: EventData) -> None:
+    def write(self, data: Any) -> None:
         record = self._record(data)
         row: list[Any] = []
         for name in self._fields:
@@ -351,7 +355,7 @@ class TableWriter(Writer):
         self._current_section: tuple[str, str] | None = None
         self._section_job_count = 0
 
-    def _prepared(self, data: EventData) -> dict[str, Any]:
+    def _prepared(self, data: Any) -> dict[str, Any]:
         source = data._asdict()
         return {name: _prepare_value(source[name], self._raw) for name in self._fields}
 
@@ -417,8 +421,8 @@ class TableWriter(Writer):
             return f'{ANSI_BOLD}{label}{ANSI_RESET}' + pad
         return self._fit(name, width)
 
-    def write(self, data: EventData) -> None:
-        section = (data.query, data.location)
+    def write(self, data: Any) -> None:
+        section = (getattr(data, 'query', ''), getattr(data, 'location', ''))
         if section != self._current_section:
             self._current_section = section
             self._section_job_count = 0
@@ -427,7 +431,7 @@ class TableWriter(Writer):
         self._record_index += 1
         record = self._prepared(data)
         if self._vertical:
-            self._write_vertical(record)
+            self._write_vertical(record, 'Profile' if isinstance(data, ProfileData) else 'Job')
         else:
             self._write_row(record)
 
@@ -460,12 +464,12 @@ class TableWriter(Writer):
         with self._spinner.pause():
             print(TABLE_COLUMN_SEPARATOR.join(cells), flush=True)
 
-    def _write_vertical(self, record: dict[str, Any]) -> None:
+    def _write_vertical(self, record: dict[str, Any], label: str = 'Job') -> None:
         key_width = max(len(name) for name in self._fields)
         with self._spinner.pause():
             if self._section_job_count > 0:
                 print(flush=True)
-            print(self._decorate(f'── Job {self._record_index} ──'), flush=True)
+            print(self._decorate(f'── {label} {self._record_index} ──'), flush=True)
             for name in self._fields:
                 value = _stringify_cell(record[name])
                 if name in HYPERLINK_FIELDS and value:

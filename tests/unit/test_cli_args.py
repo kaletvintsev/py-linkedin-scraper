@@ -94,12 +94,24 @@ def test_scrape_job_requires_positional_id() -> None:
     assert config.url_or_id == '4055815184'
 
 
+def test_profile_accepts_public_id_or_url() -> None:
+    config = parse_args(['profile', 'satya-nadella'])
+    assert config.subcommand == 'profile'
+    assert config.url_or_id == 'satya-nadella'
+
+    config = parse_args(['profile', 'https://www.linkedin.com/in/satya-nadella/'])
+    assert config.url_or_id.endswith('/in/satya-nadella/')
+
+
 def test_no_color_accepted_before_or_after_each_subcommand() -> None:
     assert parse_args(['--no-color', 'jobs', 'python']).no_color is True
     assert parse_args(['jobs', 'python', '--no-color']).no_color is True
 
     assert parse_args(['--no-color', 'job', '123']).no_color is True
     assert parse_args(['job', '123', '--no-color']).no_color is True
+
+    assert parse_args(['--no-color', 'profile', 'person']).no_color is True
+    assert parse_args(['profile', 'person', '--no-color']).no_color is True
 
     login_before = parse_args(['--no-color', 'login', '--chrome-user-data-dir', '/tmp/p'])
     login_after = parse_args(['login', '--chrome-user-data-dir', '/tmp/p', '--no-color'])

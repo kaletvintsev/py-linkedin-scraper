@@ -1,1 +1,2 @@
-from .events import Events, EventData, EventMetrics, EventSession, EventBegin, EventNotFound
+from .events import (Events, EventData, EventMetrics, EventSession, EventBegin,
+                     EventNotFound, EventProfileNotFound, ProfileData)

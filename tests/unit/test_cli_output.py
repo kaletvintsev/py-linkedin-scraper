@@ -24,7 +24,7 @@ from linkedin_jobs_scraper.cli.output import (
     resolve_format,
 )
 from linkedin_jobs_scraper.cli.spinner import Spinner
-from linkedin_jobs_scraper.events import EventData
+from linkedin_jobs_scraper.events import EventData, ProfileData
 
 _ANSI_RE = re.compile(r'\x1b\[[0-9;]*m')
 
@@ -74,6 +74,18 @@ def _sample_record() -> EventData:
     )
 
 
+def _sample_profile() -> ProfileData:
+    return ProfileData(
+        public_id='person',
+        link='https://www.linkedin.com/in/person/',
+        name='Test Person',
+        headline='Engineer',
+        location='Berlin',
+        about='About text',
+        experience=['Engineer at Acme'],
+        education=['Example University'])
+
+
 def _set_stdout_tty(monkeypatch: pytest.MonkeyPatch, is_tty: bool) -> None:
     monkeypatch.setattr(output_module.sys, 'stdout', FakeTty(is_tty))
 
@@ -117,6 +129,19 @@ def test_jsonl_lines_are_valid_json_and_collapse_newlines(tmp_path) -> None:
     assert '\n' not in record['description']
     assert '\t' not in record['description']
     assert record['insights'] == ['Remote', 'Full-time']
+
+
+def test_profile_jsonl_uses_profile_fields(tmp_path) -> None:
+    path = tmp_path / 'profile.jsonl'
+    config = CliConfig(subcommand='profile', out_path=str(path))
+    writer = create_writer(config, _disabled_spinner())
+    writer.begin()
+    writer.write(_sample_profile())
+    writer.end()
+
+    record = json.loads(path.read_text(encoding='utf-8'))
+    assert list(record) == list(ProfileData._fields)
+    assert record['public_id'] == 'person'
 
 
 # --- json -----------------------------------------------------------------

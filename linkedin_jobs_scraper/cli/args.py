@@ -214,6 +214,11 @@ def _add_scrape_job_arguments(parser: argparse.ArgumentParser) -> None:
                         help='Resolve the external apply link for the job')
 
 
+def _add_scrape_profile_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument('url_or_id', metavar='URL-OR-ID',
+                        help="A public profile id or a LinkedIn '/in/<id>' URL")
+
+
 def _add_login_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument('--chrome-user-data-dir', required=True,
                         help='Chrome profile directory to create or reuse')
@@ -231,7 +236,7 @@ def build_parser() -> argparse.ArgumentParser:
                               help='Disable coloured output')
 
     parser = argparse.ArgumentParser(
-        description='Scrape public LinkedIn job postings from the command line.',
+        description='Scrape public LinkedIn jobs and member profiles from the command line.',
         parents=[color_parent])
 
     parser.add_argument('--quiet', action='store_true', help='Suppress non-error output')
@@ -252,6 +257,12 @@ def build_parser() -> argparse.ArgumentParser:
     _add_driver_arguments(job)
     _add_output_arguments(job)
     _add_scrape_job_arguments(job)
+
+    profile = subparsers.add_parser('profile', help='Scrape a profile by public id or URL',
+                                    parents=[color_parent])
+    _add_driver_arguments(profile)
+    _add_output_arguments(profile)
+    _add_scrape_profile_arguments(profile)
 
     login = subparsers.add_parser('login', help='Sign in once into a reusable Chrome profile',
                                   parents=[color_parent])

@@ -3,7 +3,8 @@
 
 * 🔑 **Session management**: long running session with auto recovery
 * 🐢 **Adaptive rate limiting**: auto adjust scraping speed to avoid rate limiting
-* 📄 **Fields parser**: `job_id`, `link`, `apply_link`, `title`, `company`, `company_link`, `company_employee_count`, `company_img_link`, `place`, `description`, `description_html`, `date`, `date_text`, `insights`, `salary`, `is_easy_apply`, `applicant_count`, `benefits`, `reposted`
+* 📄 **Jobs and profiles**: scrape job listings and individual member profiles by public id or URL
+* 🧑 **Profile fields**: `public_id`, `link`, `name`, `headline`, `location`, `about`, `avatar_url`, `current_company`, `experience`, `education`
 * 🔍 **Filters**: relevance, time, type, experience, industry, salary, remote, company
 * 📡 **Events hooks**: data, metrics, errors
 * 🚀 **Headless support**: can run in background
@@ -130,6 +131,22 @@ Lookup a single job id or a `/jobs/view/<id>` url, with an optional `--apply-lin
 lijs job 3690634839 --chrome-user-data-dir <path>
 lijs job https://www.linkedin.com/jobs/view/3690634839 --apply-link --chrome-user-data-dir <path>
 ```
+
+#### `profile`
+
+Fetch one member profile by its public id (the part after `/in/`) or by a full profile URL:
+
+```shell script
+lijs profile satya-nadella --chrome-user-data-dir ~/.linkedin-jobs-scraper
+lijs profile https://www.linkedin.com/in/satya-nadella/ \
+  --out-format json --out-path profile.json \
+  --chrome-user-data-dir ~/.linkedin-jobs-scraper
+```
+
+The command supports the same driver and output flags as `job`, including `--fields`,
+`--all-fields`, `--raw`, JSON, JSONL, CSV and table output. A public `/in/<id>` identifier is not
+the same as LinkedIn's internal numeric member id or `urn:li:member`; internal ids are not currently
+accepted.
 
 #### `login`
 
@@ -338,6 +355,54 @@ The single-job path reads every field from the job detail panel, so a few card-o
 populated: `company_img_link` and the promoted flag. `date` has no exact `<time datetime>` here, so
 it is approximated from `date_text`. `query`, `location` are empty and `job_index` is `-1`, as
 there is no search context.
+
+#### Scraping a member profile
+
+`scrape_profile` accepts either a public profile id or a full LinkedIn `/in/<id>` URL. On success it
+emits `Events.PROFILE` with a `ProfileData` record. An unavailable profile emits
+`Events.PROFILE_NOT_FOUND`; job events and the existing `Events.DATA` contract are unchanged.
+
+```python
+from linkedin_jobs_scraper import LinkedinScraper
+from linkedin_jobs_scraper.events import (
+    Events,
+    EventProfileNotFound,
+    ProfileData,
+)
+
+
+def on_profile(profile: ProfileData):
+    print(profile.name)
+    print(profile.headline)
+    print(profile.location)
+    print(profile.about)
+    print(profile.experience)
+
+
+def on_profile_not_found(event: EventProfileNotFound):
+    print('Profile not found:', event.public_id)
+
+
+scraper = LinkedinScraper(
+    headless=True,
+    max_workers=1,
+    chrome_user_data_dir='~/.linkedin-jobs-scraper',
+)
+scraper.on(Events.PROFILE, on_profile)
+scraper.on(Events.PROFILE_NOT_FOUND, on_profile_not_found)
+
+# Public id (the part after /in/)
+scraper.scrape_profile('satya-nadella')
+
+# Or the full URL; query parameters are ignored
+scraper.scrape_profile('https://www.linkedin.com/in/satya-nadella/?trk=public_profile')
+```
+
+`ProfileData` contains `public_id`, canonical `link`, `name`, `headline`, `location`, `about`,
+`avatar_url`, `current_company`, `experience` and `education`. Experience and education are lists
+of normalized text entries. LinkedIn changes its rendered markup periodically, so fields that are
+not present or visible to the authenticated account are returned empty rather than treated as an
+error.
 
 ### Pinning a location by geoId
 

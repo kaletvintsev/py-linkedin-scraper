@@ -1,4 +1,5 @@
 import re
+from urllib.parse import unquote
 from urllib.parse import urlparse, urlencode, parse_qsl, urljoin
 
 
@@ -23,6 +24,27 @@ def get_job_id(url_or_id: str) -> str:
         return current_job_id
 
     raise ValueError(f'Could not extract a job id from {url_or_id!r}')
+
+
+def get_profile_public_id(url_or_id: str) -> str:
+    """Extract the public identifier from a bare id or a LinkedIn ``/in/`` URL."""
+    value = url_or_id.strip()
+
+    if re.fullmatch(r'[A-Za-z0-9_-]+', value):
+        return value
+
+    parsed = urlparse(value)
+    if parsed.scheme not in ('http', 'https') or get_domain(value).lower() != 'linkedin.com':
+        raise ValueError(f'Expected a LinkedIn profile id or URL, found {url_or_id!r}')
+
+    match = re.fullmatch(r'/in/([^/]+)/?', parsed.path)
+    if not match:
+        raise ValueError(f'Could not extract a profile id from {url_or_id!r}')
+
+    public_id = unquote(match.group(1))
+    if not re.fullmatch(r'[A-Za-z0-9_-]+', public_id):
+        raise ValueError(f'Invalid LinkedIn profile id in {url_or_id!r}')
+    return public_id
 
 
 def get_query_params(url: str) -> dict:
