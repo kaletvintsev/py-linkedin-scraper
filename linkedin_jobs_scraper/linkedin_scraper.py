@@ -126,6 +126,7 @@ class LinkedinScraper:
             Events.END: [],
             Events.PROFILE: [],
             Events.PROFILE_NOT_FOUND: [],
+            Events.POST: [],
         }
 
         # Every run authenticates, so there is one strategy and it is built unconditionally.
@@ -411,6 +412,46 @@ class LinkedinScraper:
             error(tag, e)
             self.emit(Events.ERROR, str(e) + '\n' + traceback.format_exc())
 
+    def scrape_profile_posts(self, url_or_id: str, limit: int = 10) -> None:
+        """Scrape posts published by a member from their public activity page."""
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
+            raise ValueError('Parameter limit must be a positive integer')
+
+        public_id = get_profile_public_id(url_or_id)
+        tag = f'[profile-posts:{public_id}]'
+        info('Starting profile posts scrape', public_id)
+
+        if self.interactive_login and not ensure_session(
+                self.chrome_user_data_dir, self.chrome_executable_path, self.chrome_binary_location):
+            raise RuntimeError('Interactive login did not establish a session, nothing to scrape with')
+
+        try:
+            driver = build_driver(
+                executable_path=self.chrome_executable_path,
+                binary_location=self.chrome_binary_location,
+                options=self.chrome_options,
+                headless=self.headless,
+                chrome_user_data_dir=self.chrome_user_data_dir,
+                timeout=self.page_load_timeout)
+            try:
+                self._strategy.scrape_profile_posts(driver, public_id, limit)
+                self.__emit_refreshed_session(driver)
+            finally:
+                try:
+                    debug(tag, 'Closing driver')
+                    driver.quit()
+                except BaseException:
+                    pass
+        except CallbackException as e:
+            error(tag, e)
+            raise e
+        except InvalidCookieException as e:
+            error(tag, e)
+            raise e
+        except BaseException as e:
+            error(tag, e)
+            self.emit(Events.ERROR, str(e) + '\n' + traceback.format_exc())
+
     def run(self, queries: Union[Query, List[Query]], options: QueryOptions = None) -> None:
         """
         Run a query or a list of queries
@@ -467,7 +508,7 @@ class LinkedinScraper:
         if not callable(cb):
             raise ValueError('Callback must be callable')
 
-        if event in (Events.DATA, Events.PROFILE, Events.ERROR, Events.METRICS,
+        if event in (Events.DATA, Events.PROFILE, Events.POST, Events.ERROR, Events.METRICS,
                      Events.SESSION_REFRESHED, Events.BEGIN, Events.NOT_FOUND,
                      Events.PROFILE_NOT_FOUND):
             allowed_params = 1

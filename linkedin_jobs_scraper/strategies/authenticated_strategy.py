@@ -20,7 +20,7 @@ from ..utils.url import override_query_params
 from ..utils.text import normalize_spaces, clean_applicant_count
 from ..utils.dates import parse_relative_date
 from ..events import (Events, EventData, EventMetrics, EventBegin, EventNotFound,
-                      EventProfileNotFound, ProfileData)
+                      EventProfileNotFound, ProfileData, PostData)
 from ..exceptions import InvalidCookieException
 
 
@@ -90,6 +90,8 @@ CONTAINER_WAIT_TIMEOUT = 15
 SINGLE_JOB_PANEL_TIMEOUT = 15
 SINGLE_JOB_PANEL_QUIET_PERIOD = 1
 PROFILE_WAIT_TIMEOUT = 15
+PROFILE_POSTS_WAIT_TIMEOUT = 15
+PROFILE_POSTS_MAX_STALE_SCROLLS = 3
 
 
 class Selectors(NamedTuple):
@@ -188,6 +190,65 @@ EXTRACT_PROFILE_SCRIPT = r'''
         text(arguments[0]), text(arguments[1]), text(arguments[2]), text(arguments[3]),
         avatar ? (avatar.src || "") : "", rows(arguments[5]), rows(arguments[6])
     ];
+'''
+
+
+EXTRACT_PROFILE_POSTS_SCRIPT = r'''
+    const clean = value => (value || '').replace(/[\n\r\t ]+/g, ' ').trim();
+    const number = value => {
+        const match = clean(value).match(/[\d,.]+/);
+        return match ? Number(match[0].replace(/,/g, '')) || 0 : 0;
+    };
+    const cards = [...document.querySelectorAll('[data-urn^="urn:li:activity:"]')];
+    const seen = new Set();
+    const posts = [];
+
+    for (const card of cards) {
+        const urn = card.getAttribute('data-urn') || '';
+        const idMatch = urn.match(/urn:li:activity:(\d+)/);
+        if (!idMatch || seen.has(idMatch[1])) continue;
+        const permalink = card.querySelector(
+            'a[href*="/feed/update/urn:li:activity:"], a[href*="urn:li:activity:"]');
+        const href = permalink ?
+            (permalink.href || permalink.getAttribute('href') || '').split('?')[0] :
+            `https://www.linkedin.com/feed/update/urn:li:activity:${idMatch[1]}/`;
+        const author = card.querySelector(
+            '.update-components-actor__meta-link, a[href*="/in/"], a[href*="/company/"]');
+        const authorName = card.querySelector('.update-components-actor__title');
+        const date = card.querySelector(
+            'time, .update-components-actor__sub-description, [class*="actor__sub-description"]');
+        const commentary = card.querySelector(
+            '[data-testid*="commentary"], [data-test-id*="commentary"], '
+            + '.update-components-update-v2__commentary, .feed-shared-update-v2__description');
+        const paragraphs = [...card.querySelectorAll('p')]
+            .map(element => clean(element.innerText)).filter(value => value.length > 1);
+        const text = commentary ? clean(commentary.innerText) :
+            (paragraphs.sort((left, right) => right.length - left.length)[0] || '');
+        const labels = [...card.querySelectorAll('button, a')]
+            .map(element => clean((element.getAttribute('aria-label') || '') + ' ' + element.innerText));
+        const metric = expression => number(labels.find(value => expression.test(value)) || '');
+        const images = [...card.querySelectorAll(
+            '.update-components-image img[src], .update-components-document img[src]')]
+            .map(element => element.currentSrc || element.src)
+            .filter(Boolean);
+
+        seen.add(idMatch[1]);
+        posts.push({
+            post_id: idMatch[1],
+            link: href,
+            author_name: authorName ? clean(authorName.innerText) :
+                (author ? clean(author.innerText || author.getAttribute('aria-label')) : ''),
+            author_link: author ? (author.href || '').split('?')[0] : '',
+            text,
+            date_text: date ? clean(date.innerText) : '',
+            reactions: metric(/reaction|like/i),
+            comments: metric(/comment/i),
+            reposts: metric(/repost/i),
+            image_urls: [...new Set(images)]
+        });
+    }
+
+    return posts;
 '''
 
 
@@ -1686,6 +1747,103 @@ class AuthenticatedStrategy(Strategy):
             education=education)
         info(tag, 'Processed')
         self.scraper.emit(Events.PROFILE, data)
+
+    def scrape_profile_posts(self, driver: webdriver, public_id: str, limit: int) -> None:
+        """Scrape posts authored by one member from their recent activity page."""
+        tag = f'[profile-posts:{public_id}]'
+        # LinkedIn currently renders the Posts collection on ``all``. The seemingly
+        # dedicated ``posts`` route can redirect to the empty Articles collection for
+        # some accounts/layout versions.
+        activity_link = f'https://www.linkedin.com/in/{public_id}/recent-activity/all/'
+
+        debug(tag, f'Opening {HOME_URL}')
+        driver.get(HOME_URL)
+        sleep(self.scraper.pacer.delay)
+
+        if not wait_for_linkedin(driver):
+            warn(tag, 'The browser never landed on LinkedIn, skip')
+            return
+
+        mask_headless_user_agent(driver)
+        has_profile = bool(self.scraper.chrome_user_data_dir)
+        if has_profile:
+            AuthenticatedStrategy.__wait_for_session(driver)
+        if not AuthenticatedStrategy.__is_authenticated_session(driver):
+            if not AuthenticatedStrategy.__authenticate(driver, tag, has_profile):
+                return
+
+        def wait_for_activity(current_driver: webdriver) -> bool:
+            try:
+                WebDriverWait(current_driver, PROFILE_POSTS_WAIT_TIMEOUT).until(
+                    ec.presence_of_element_located(
+                        (By.CSS_SELECTOR, 'main [data-urn^="urn:li:activity:"]')))
+                return True
+            except BaseException:
+                return False
+
+        if not self.__open_and_wait(driver, tag, activity_link, wait_for_activity):
+            if AuthenticatedStrategy.__is_throttled(driver) or not is_on_linkedin(driver):
+                warn(tag, f'Could not load activity for profile {public_id}, skip')
+                return
+            if (AuthenticatedStrategy.__is_session_lost(driver) or
+                    AuthenticatedStrategy.__is_guest_page(driver)):
+                warn(tag, 'The LinkedIn session is no longer accepted')
+                self.scraper.emit(Events.INVALID_SESSION)
+                return
+            warn(tag, f'Profile {public_id} not found or unavailable')
+            self.scraper.emit(
+                Events.PROFILE_NOT_FOUND,
+                EventProfileNotFound(public_id=public_id))
+            return
+
+        posts_by_id = {}
+        previous_count = 0
+        stale_scrolls = 0
+
+        while len(posts_by_id) < limit and stale_scrolls < PROFILE_POSTS_MAX_STALE_SCROLLS:
+            visible_posts = driver.execute_script(EXTRACT_PROFILE_POSTS_SCRIPT)
+            for post in visible_posts:
+                posts_by_id[post['post_id']] = post
+
+            if len(posts_by_id) == previous_count:
+                stale_scrolls += 1
+            else:
+                stale_scrolls = 0
+                previous_count = len(posts_by_id)
+
+            if len(posts_by_id) >= limit:
+                break
+
+            driver.execute_script(
+                '''
+                    const more = document.querySelector('button.scaffold-finite-scroll__load-button');
+                    if (more && more.offsetParent !== null) {
+                        more.click();
+                    } else {
+                        const cards = document.querySelectorAll('[data-urn^="urn:li:activity:"]');
+                        const last = cards[cards.length - 1];
+                        if (last) last.scrollIntoView({block: 'center'});
+                        window.scrollBy(0, Math.floor(window.innerHeight * 0.8));
+                    }
+                ''')
+            sleep(self.scraper.pacer.delay)
+
+        posts = list(posts_by_id.values())
+        for raw in posts[:limit]:
+            data = PostData(
+                post_id=raw.get('post_id', ''),
+                link=raw.get('link', ''),
+                author_name=normalize_spaces(raw.get('author_name', '')),
+                author_link=raw.get('author_link', ''),
+                text=normalize_spaces(raw.get('text', '')),
+                date_text=normalize_spaces(raw.get('date_text', '')),
+                reactions=raw.get('reactions', 0),
+                comments=raw.get('comments', 0),
+                reposts=raw.get('reposts', 0),
+                image_urls=raw.get('image_urls', []))
+            self.scraper.emit(Events.POST, data)
+
+        info(tag, f'Processed {min(len(posts), limit)} posts')
 
     def run(
         self,

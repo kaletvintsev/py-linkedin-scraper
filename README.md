@@ -404,6 +404,29 @@ of normalized text entries. LinkedIn changes its rendered markup periodically, s
 not present or visible to the authenticated account are returned empty rather than treated as an
 error.
 
+#### Scraping posts published by a member
+
+`scrape_profile_posts` accepts the same public id or profile URL and emits one `Events.POST` event
+per post. `limit` controls the maximum number of posts and defaults to 10.
+
+```python
+from linkedin_jobs_scraper.events import Events, PostData
+
+
+def on_post(post: PostData):
+    print(post.author_name, post.date_text)
+    print(post.text)
+    print(post.link, post.reactions, post.comments, post.reposts)
+
+
+scraper.on(Events.POST, on_post)
+scraper.scrape_profile_posts('satya-nadella', limit=20)
+```
+
+`PostData` contains `post_id`, canonical `link`, author name and link, text, displayed date,
+reaction/comment/repost counts and media image URLs. Only posts present on the member's activity
+page and visible to the authenticated account can be returned.
+
 ### Pinning a location by geoId
 
 A location entry can be a plain string (a place name LinkedIn resolves for you) or a `Location`

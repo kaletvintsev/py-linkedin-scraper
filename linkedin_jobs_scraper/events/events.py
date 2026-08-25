@@ -14,6 +14,7 @@ class Events(Enum):
     NOT_FOUND = 'scraper:not-found'
     PROFILE = 'scraper:profile'
     PROFILE_NOT_FOUND = 'scraper:profile-not-found'
+    POST = 'scraper:post'
 
 
 class EventSession(NamedTuple):
@@ -56,6 +57,20 @@ class ProfileData(NamedTuple):
     current_company: str = ''
     experience: List[str] = []
     education: List[str] = []
+
+
+class PostData(NamedTuple):
+    """Public fields extracted from one post on a member's activity page."""
+    post_id: str = ''
+    link: str = ''
+    author_name: str = ''
+    author_link: str = ''
+    text: str = ''
+    date_text: str = ''
+    reactions: int = 0
+    comments: int = 0
+    reposts: int = 0
+    image_urls: List[str] = []
 
 
 class EventData(NamedTuple):
