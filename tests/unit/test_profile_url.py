@@ -1,3 +1,5 @@
+from urllib.parse import quote
+
 import pytest
 
 from linkedin_jobs_scraper.utils.url import get_profile_public_id
@@ -5,7 +7,13 @@ from linkedin_jobs_scraper.utils.url import get_profile_public_id
 
 @pytest.mark.parametrize(('value', 'expected'), [
     ('satya-nadella', 'satya-nadella'),
+    ('виктория-закирова-0499941b7', 'виктория-закирова-0499941b7'),
     ('https://www.linkedin.com/in/satya-nadella/', 'satya-nadella'),
+    ('https://www.linkedin.com/in/виктория-закирова-0499941b7/', 'виктория-закирова-0499941b7'),
+    (
+        f'https://www.linkedin.com/in/{quote("виктория-закирова-0499941b7")}/',
+        'виктория-закирова-0499941b7',
+    ),
     ('https://linkedin.com/in/satya-nadella?trk=public_profile', 'satya-nadella'),
 ])
 def test_get_profile_public_id(value: str, expected: str) -> None:

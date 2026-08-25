@@ -30,7 +30,7 @@ def get_profile_public_id(url_or_id: str) -> str:
     """Extract the public identifier from a bare id or a LinkedIn ``/in/`` URL."""
     value = url_or_id.strip()
 
-    if re.fullmatch(r'[A-Za-z0-9_-]+', value):
+    if re.fullmatch(r'[\w-]+', value):
         return value
 
     parsed = urlparse(value)
@@ -42,7 +42,7 @@ def get_profile_public_id(url_or_id: str) -> str:
         raise ValueError(f'Could not extract a profile id from {url_or_id!r}')
 
     public_id = unquote(match.group(1))
-    if not re.fullmatch(r'[A-Za-z0-9_-]+', public_id):
+    if not re.fullmatch(r'[\w-]+', public_id):
         raise ValueError(f'Invalid LinkedIn profile id in {url_or_id!r}')
     return public_id
 
