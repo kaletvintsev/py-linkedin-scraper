@@ -125,13 +125,70 @@ class Selectors(NamedTuple):
 
 class ProfileSelectors(NamedTuple):
     main = 'main'
-    name = 'main h1'
+    # LinkedIn's newer SDUI profile has an h2 inside a component whose id ends in
+    # ``Topcard``. Keep the legacy h1 fallback for profiles still using Voyager markup.
+    top_card = 'main [id$="Topcard"]'
+    name = 'main [id$="Topcard"] h2, main h1'
     headline = 'main .text-body-medium'
     location = 'main .text-body-small.inline, main .text-body-small:not(.break-words)'
-    avatar = 'main img.pv-top-card-profile-picture__image--show, main img.profile-photo-edit__preview'
-    about = 'section:has(#about) .display-flex.ph5.pv3, section:has(#about) .inline-show-more-text'
-    experience = 'section:has(#experience) li.artdeco-list__item'
-    education = 'section:has(#education) li.artdeco-list__item'
+    avatar = 'main [id$="Topcard"] [aria-label="Profile photo"] img, ' \
+             'main img.pv-top-card-profile-picture__image--show, main img.profile-photo-edit__preview'
+    about = 'main [id$="About"] section, section:has(#about) .display-flex.ph5.pv3, ' \
+            'section:has(#about) .inline-show-more-text'
+    experience = 'main [data-testid^="profile_ExperienceTopLevelSection_"] ' \
+                 '> [componentkey^="entity-collection-item-"], ' \
+                 'section:has(#experience) li.artdeco-list__item'
+    education = 'main [data-testid^="profile_EducationTopLevelSection_"] ' \
+                '> [componentkey^="entity-collection-item-"], ' \
+                'section:has(#education) li.artdeco-list__item'
+
+
+EXTRACT_PROFILE_SCRIPT = r'''
+    const text = selector => {
+        const element = document.querySelector(selector);
+        return element ? element.innerText.trim() : "";
+    };
+    const rows = selector => [...document.querySelectorAll(selector)]
+        .map(element => element.innerText.replace(/[\n\r\t ]+/g, " ").trim())
+        .filter(Boolean);
+
+    const topCard = document.querySelector(arguments[7]);
+    const avatar = document.querySelector(arguments[4]);
+
+    // The SDUI profile deliberately uses generated class names. Its component ids,
+    // semantic links and data-testid attributes are the stable part of the document.
+    if (topCard) {
+        const nameElement = topCard.querySelector('h2');
+        const name = nameElement ? nameElement.innerText.trim() : text(arguments[0]);
+        const contact = topCard.querySelector('a[href*="/overlay/contact-info/"]');
+        const locationRow = contact ? contact.closest('div') : null;
+        const location = locationRow ?
+            ([...locationRow.querySelectorAll('p')]
+                .map(element => element.innerText.trim())
+                .find(value => value && value !== '·' && !/contact info/i.test(value)) || '') : '';
+        const paragraphs = [...topCard.querySelectorAll('p')]
+            .map(element => element.innerText.replace(/[\n\r\t ]+/g, ' ').trim())
+            .filter(Boolean);
+        const headline = paragraphs.find(value =>
+            value !== name && value !== location && value !== '·' &&
+            !/^·?\s*(1st|2nd|3rd)\b/i.test(value) &&
+            !/^(?:[\d,.]+\+?\s+)?(?:followers?|connections?)$/i.test(value) &&
+            !/^followed by\b/i.test(value)) || '';
+        const aboutElement = document.querySelector(arguments[3]);
+        let about = aboutElement ? aboutElement.innerText.trim() : '';
+        about = about.replace(/^About\s*/i, '').trim();
+
+        return [
+            name, headline, location, about, avatar ? (avatar.src || '') : '',
+            rows(arguments[5]), rows(arguments[6])
+        ];
+    }
+
+    return [
+        text(arguments[0]), text(arguments[1]), text(arguments[2]), text(arguments[3]),
+        avatar ? (avatar.src || "") : "", rows(arguments[5]), rows(arguments[6])
+    ];
+'''
 
 
 # Extracts salary, easy-apply flag, applicant count and benefits from the detail panel in
@@ -1599,28 +1656,15 @@ class AuthenticatedStrategy(Strategy):
             return
 
         values = driver.execute_script(
-            r'''
-                const text = selector => {
-                    const element = document.querySelector(selector);
-                    return element ? element.innerText.trim() : "";
-                };
-                const rows = selector => [...document.querySelectorAll(selector)]
-                    .map(element => element.innerText.replace(/[\n\r\t ]+/g, " ").trim())
-                    .filter(Boolean);
-                const avatar = document.querySelector(arguments[4]);
-                return [
-                    text(arguments[0]), text(arguments[1]), text(arguments[2]),
-                    text(arguments[3]), avatar ? (avatar.src || "") : "",
-                    rows(arguments[5]), rows(arguments[6])
-                ];
-            ''',
+            EXTRACT_PROFILE_SCRIPT,
             ProfileSelectors.name,
             ProfileSelectors.headline,
             ProfileSelectors.location,
             ProfileSelectors.about,
             ProfileSelectors.avatar,
             ProfileSelectors.experience,
-            ProfileSelectors.education)
+            ProfileSelectors.education,
+            ProfileSelectors.top_card)
 
         name, headline, location, about, avatar_url, experience, education = values
         experience = [normalize_spaces(item) for item in experience]
