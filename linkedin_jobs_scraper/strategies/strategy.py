@@ -29,3 +29,6 @@ class Strategy:
 
     def scrape_profile_posts(self, driver: webdriver, public_id: str, limit: int) -> None:
         raise NotImplementedError('Must implement method in subclass')
+
+    def search_posts(self, driver: webdriver, search_url: str, limit: int) -> None:
+        raise NotImplementedError('Must implement method in subclass')

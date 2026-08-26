@@ -1,7 +1,7 @@
 import traceback
 from inspect import signature
 from concurrent.futures import ThreadPoolExecutor
-from urllib.parse import urlparse, urlencode
+from urllib.parse import quote_plus, urlparse, urlencode
 from typing import Union, Callable, List
 from selenium.webdriver.chrome.options import Options
 from .utils.logger import debug, info, warn, error
@@ -435,6 +435,58 @@ class LinkedinScraper:
                 timeout=self.page_load_timeout)
             try:
                 self._strategy.scrape_profile_posts(driver, public_id, limit)
+                self.__emit_refreshed_session(driver)
+            finally:
+                try:
+                    debug(tag, 'Closing driver')
+                    driver.quit()
+                except BaseException:
+                    pass
+        except CallbackException as e:
+            error(tag, e)
+            raise e
+        except InvalidCookieException as e:
+            error(tag, e)
+            raise e
+        except BaseException as e:
+            error(tag, e)
+            self.emit(Events.ERROR, str(e) + '\n' + traceback.format_exc())
+
+    def search_posts(self, keywords_or_url: str, limit: int = 10) -> None:
+        """Search posts by keywords or by a LinkedIn content-search URL."""
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
+            raise ValueError('Parameter limit must be a positive integer')
+        if not isinstance(keywords_or_url, str) or not keywords_or_url.strip():
+            raise ValueError('Parameter keywords_or_url must be a non-empty string')
+
+        value = keywords_or_url.strip()
+        parsed = urlparse(value)
+        if parsed.scheme or parsed.netloc:
+            if (parsed.scheme not in ('http', 'https') or
+                    parsed.netloc.lower() not in ('linkedin.com', 'www.linkedin.com') or
+                    parsed.path.rstrip('/') != '/search/results/content'):
+                raise ValueError('URL must be a LinkedIn content-search URL')
+            search_url = value
+        else:
+            search_url = ('https://www.linkedin.com/search/results/content/'
+                          f'?keywords={quote_plus(value)}&origin=GLOBAL_SEARCH_HEADER')
+
+        tag = '[post-search]'
+        info('Starting post search', value)
+        if self.interactive_login and not ensure_session(
+                self.chrome_user_data_dir, self.chrome_executable_path, self.chrome_binary_location):
+            raise RuntimeError('Interactive login did not establish a session, nothing to scrape with')
+
+        try:
+            driver = build_driver(
+                executable_path=self.chrome_executable_path,
+                binary_location=self.chrome_binary_location,
+                options=self.chrome_options,
+                headless=self.headless,
+                chrome_user_data_dir=self.chrome_user_data_dir,
+                timeout=self.page_load_timeout)
+            try:
+                self._strategy.search_posts(driver, search_url, limit)
                 self.__emit_refreshed_session(driver)
             finally:
                 try:

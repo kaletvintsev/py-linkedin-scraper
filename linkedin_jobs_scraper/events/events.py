@@ -60,7 +60,7 @@ class ProfileData(NamedTuple):
 
 
 class PostData(NamedTuple):
-    """Public fields extracted from one post on a member's activity page."""
+    """Public fields extracted from a member activity page or post search."""
     post_id: str = ''
     link: str = ''
     author_name: str = ''

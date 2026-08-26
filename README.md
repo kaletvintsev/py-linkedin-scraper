@@ -427,6 +427,19 @@ scraper.scrape_profile_posts('satya-nadella', limit=20)
 reaction/comment/repost counts and media image URLs. Only posts present on the member's activity
 page and visible to the authenticated account can be returned.
 
+#### Searching posts
+
+`search_posts` accepts either keywords or a full LinkedIn content-search URL. It emits the same
+`Events.POST` events and uses `limit` to stop lazy loading.
+
+```python
+scraper.on(Events.POST, on_post)
+scraper.search_posts('ищем python разработчика', limit=50)
+```
+
+For cards where LinkedIn does not expose a post permalink, `link` is empty and `post_id` is a
+stable content-derived identifier. Results are limited to posts visible to the authenticated account.
+
 ### Pinning a location by geoId
 
 A location entry can be a plain string (a place name LinkedIn resolves for you) or a `Location`

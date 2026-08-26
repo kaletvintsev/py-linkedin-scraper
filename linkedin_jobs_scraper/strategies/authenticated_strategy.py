@@ -1,3 +1,4 @@
+import hashlib
 import traceback
 from datetime import datetime
 from random import uniform
@@ -92,6 +93,8 @@ SINGLE_JOB_PANEL_QUIET_PERIOD = 1
 PROFILE_WAIT_TIMEOUT = 15
 PROFILE_POSTS_WAIT_TIMEOUT = 15
 PROFILE_POSTS_MAX_STALE_SCROLLS = 3
+POST_SEARCH_WAIT_TIMEOUT = 15
+POST_SEARCH_MAX_STALE_SCROLLS = 3
 
 
 class Selectors(NamedTuple):
@@ -249,6 +252,53 @@ EXTRACT_PROFILE_POSTS_SCRIPT = r'''
     }
 
     return posts;
+'''
+
+
+EXTRACT_SEARCH_POSTS_SCRIPT = r'''
+    const clean = value => (value || '').replace(/[\n\r\t ]+/g, ' ').trim();
+    const count = value => {
+        const match = clean(value).match(/[\d,.]+/);
+        return match ? Number(match[0].replace(/,/g, '')) || 0 : 0;
+    };
+    const root = document.querySelector(
+        '[data-sdui-screen="com.linkedin.sdui.flagshipnav.search.SearchResultsContent"]');
+    if (!root) return [];
+    const cards = [...root.querySelectorAll('[role="listitem"]')]
+        .filter(card => clean(card.querySelector('h2')?.innerText) === 'Feed post');
+
+    return cards.map(card => {
+        const author = card.querySelector(
+            'a[href*="linkedin.com/in/"], a[href*="linkedin.com/company/"], '
+            + 'a[href*="linkedin.com/groups/"]');
+        const authorLink = author ? (author.href || author.getAttribute('href') || '').split('?')[0] : '';
+        const menu = card.querySelector('[aria-label^="Open control menu for post by "]');
+        const authorName = menu ? clean(menu.getAttribute('aria-label'))
+            .replace(/^Open control menu for post by /, '') : clean(author?.innerText);
+        const commentary = card.querySelector('[data-testid="expandable-text-box"]');
+        const text = clean(commentary?.innerText);
+        const permalink = card.querySelector(
+            'a[href*="/feed/update/urn:li:activity:"], a[href*="/feed/update/urn:li:share:"], '
+            + 'a[href*="highlightedUpdateUrn="]');
+        const link = permalink ? (permalink.href || permalink.getAttribute('href') || '') : '';
+        const urnMatch = (link + ' ' + (card.id || '') + ' ' + (card.getAttribute('componentkey') || ''))
+            .match(/urn(?::|%3A)li(?::|%3A)(?:activity|share)(?::|%3A)(\d+)/i);
+        const date = [...card.querySelectorAll('p')].map(element => clean(element.innerText))
+            .find(value => /^(?:\d+[smhdwy]|now)\b/i.test(value)) || '';
+        const allText = [...card.querySelectorAll('span, p')].map(element => clean(element.innerText));
+        const metric = expression => count(allText.find(value => expression.test(value)) || '');
+        const imageUrls = [...card.querySelectorAll('img')]
+            .map(image => image.currentSrc || image.src || '')
+            .filter(src => /\/(?:feedshare|articleshare|image-shrink)[-_]/i.test(src));
+        return {
+            post_id: urnMatch ? urnMatch[1] : '', link, author_name: authorName,
+            author_link: authorLink, text, date_text: date,
+            reactions: metric(/^\d[\d,.]*\s+reactions?$/i),
+            comments: metric(/^\d[\d,.]*\s+comments?$/i),
+            reposts: metric(/^\d[\d,.]*\s+reposts?$/i),
+            image_urls: [...new Set(imageUrls)]
+        };
+    }).filter(post => post.text || post.post_id);
 '''
 
 
@@ -1844,6 +1894,75 @@ class AuthenticatedStrategy(Strategy):
             self.scraper.emit(Events.POST, data)
 
         info(tag, f'Processed {min(len(posts), limit)} posts')
+
+    def search_posts(self, driver: webdriver, search_url: str, limit: int) -> None:
+        """Search rendered SDUI content results without relying on generated classes."""
+        tag = '[post-search]'
+        driver.get(HOME_URL)
+        sleep(self.scraper.pacer.delay)
+        if not wait_for_linkedin(driver):
+            warn(tag, 'The browser never landed on LinkedIn, skip')
+            return
+
+        mask_headless_user_agent(driver)
+        has_profile = bool(self.scraper.chrome_user_data_dir)
+        if has_profile:
+            AuthenticatedStrategy.__wait_for_session(driver)
+        if not AuthenticatedStrategy.__is_authenticated_session(driver):
+            if not AuthenticatedStrategy.__authenticate(driver, tag, has_profile):
+                return
+
+        def wait_for_results(current_driver: webdriver) -> bool:
+            try:
+                WebDriverWait(current_driver, POST_SEARCH_WAIT_TIMEOUT).until(
+                    ec.presence_of_element_located((By.CSS_SELECTOR,
+                        '[data-sdui-screen="com.linkedin.sdui.flagshipnav.search.SearchResultsContent"]')))
+                return True
+            except BaseException:
+                return False
+
+        if not self.__open_and_wait(driver, tag, search_url, wait_for_results):
+            if (AuthenticatedStrategy.__is_session_lost(driver) or
+                    AuthenticatedStrategy.__is_guest_page(driver)):
+                self.scraper.emit(Events.INVALID_SESSION)
+            else:
+                warn(tag, 'Could not load post search results')
+            return
+
+        posts_by_id = {}
+        stale_scrolls = 0
+        previous_count = 0
+        while len(posts_by_id) < limit and stale_scrolls < POST_SEARCH_MAX_STALE_SCROLLS:
+            for raw in driver.execute_script(EXTRACT_SEARCH_POSTS_SCRIPT):
+                post_id = raw.get('post_id') or hashlib.sha1(
+                    f"{raw.get('author_link', '')}\0{raw.get('text', '')}".encode('utf-8')).hexdigest()
+                raw['post_id'] = post_id
+                posts_by_id[post_id] = raw
+            if len(posts_by_id) == previous_count:
+                stale_scrolls += 1
+            else:
+                stale_scrolls = 0
+                previous_count = len(posts_by_id)
+            if len(posts_by_id) >= limit:
+                break
+            driver.execute_script('''
+                const cards = document.querySelectorAll('[role="listitem"]');
+                const last = cards[cards.length - 1];
+                if (last) last.scrollIntoView({block: 'center'});
+                window.scrollBy(0, Math.floor(window.innerHeight * 0.8));
+            ''')
+            sleep(self.scraper.pacer.delay)
+
+        for raw in list(posts_by_id.values())[:limit]:
+            self.scraper.emit(Events.POST, PostData(
+                post_id=raw.get('post_id', ''), link=raw.get('link', ''),
+                author_name=normalize_spaces(raw.get('author_name', '')),
+                author_link=raw.get('author_link', ''),
+                text=normalize_spaces(raw.get('text', '')),
+                date_text=normalize_spaces(raw.get('date_text', '')),
+                reactions=raw.get('reactions', 0), comments=raw.get('comments', 0),
+                reposts=raw.get('reposts', 0), image_urls=raw.get('image_urls', [])))
+        info(tag, f'Processed {min(len(posts_by_id), limit)} posts')
 
     def run(
         self,
