@@ -504,6 +504,76 @@ class LinkedinScraper:
             error(tag, e)
             self.emit(Events.ERROR, str(e) + '\n' + traceback.format_exc())
 
+    def scrape_post(self, post_url: str, include_reposters: bool = False,
+                    reposters_limit: int = 100) -> None:
+        """Scrape one LinkedIn post by its public permalink."""
+        self.scrape_posts([post_url], include_reposters, reposters_limit)
+
+    def scrape_posts(self, post_urls: Union[str, List[str]], include_reposters: bool = False,
+                     reposters_limit: int = 100) -> None:
+        """Scrape several LinkedIn post permalinks using one browser session."""
+        if not isinstance(include_reposters, bool):
+            raise ValueError('Parameter include_reposters must be a boolean')
+        if (isinstance(reposters_limit, bool) or not isinstance(reposters_limit, int)
+                or reposters_limit <= 0):
+            raise ValueError('Parameter reposters_limit must be a positive integer')
+        if isinstance(post_urls, str):
+            post_urls = [post_urls]
+        if not isinstance(post_urls, list) or not post_urls:
+            raise ValueError('Parameter post_urls must be a non-empty string or list of strings')
+
+        normalized_urls = []
+        for post_url in post_urls:
+            if not isinstance(post_url, str) or not post_url.strip():
+                raise ValueError('Each post URL must be a non-empty string')
+            post_url = post_url.strip()
+            parsed = urlparse(post_url)
+            is_linkedin = (parsed.scheme in ('http', 'https') and
+                           parsed.netloc.lower() in ('linkedin.com', 'www.linkedin.com'))
+            is_post_path = (parsed.path.startswith('/feed/update/') or
+                            parsed.path.startswith('/posts/'))
+            if not is_linkedin or not is_post_path:
+                raise ValueError('Each URL must be a LinkedIn post permalink')
+            normalized_urls.append(post_url)
+
+        tag = '[posts]'
+        info('Starting posts scrape', len(normalized_urls))
+        if self.interactive_login and not ensure_session(
+                self.chrome_user_data_dir, self.chrome_executable_path, self.chrome_binary_location):
+            raise RuntimeError('Interactive login did not establish a session, nothing to scrape with')
+
+        try:
+            driver = build_driver(
+                executable_path=self.chrome_executable_path,
+                binary_location=self.chrome_binary_location,
+                options=self.chrome_options,
+                headless=self.headless,
+                chrome_user_data_dir=self.chrome_user_data_dir,
+                timeout=self.page_load_timeout)
+            try:
+                for post_url in normalized_urls:
+                    if include_reposters:
+                        self._strategy.scrape_post(
+                            driver, post_url, include_reposters, reposters_limit)
+                    else:
+                        self._strategy.scrape_post(driver, post_url)
+                self.__emit_refreshed_session(driver)
+            finally:
+                try:
+                    debug(tag, 'Closing driver')
+                    driver.quit()
+                except BaseException:
+                    pass
+        except CallbackException as e:
+            error(tag, e)
+            raise e
+        except InvalidCookieException as e:
+            error(tag, e)
+            raise e
+        except BaseException as e:
+            error(tag, e)
+            self.emit(Events.ERROR, str(e) + '\n' + traceback.format_exc())
+
     def run(self, queries: Union[Query, List[Query]], options: QueryOptions = None) -> None:
         """
         Run a query or a list of queries

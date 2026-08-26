@@ -427,6 +427,47 @@ scraper.scrape_profile_posts('satya-nadella', limit=20)
 reaction/comment/repost counts and media image URLs. Only posts present on the member's activity
 page and visible to the authenticated account can be returned.
 
+#### Scraping one post
+
+`scrape_post` accepts a LinkedIn `/feed/update/` or `/posts/` permalink and emits one
+`Events.POST` event with the same `PostData` structure:
+
+```python
+scraper.on(Events.POST, on_post)
+scraper.scrape_post(
+    'https://www.linkedin.com/feed/update/urn:li:activity:7497753341712789504/'
+)
+```
+
+Several permalinks can be processed in one call and one browser session. One `Events.POST` event
+is emitted for every available post:
+
+```python
+scraper.scrape_posts([
+    'https://www.linkedin.com/feed/update/urn:li:activity:7497753341712789504/',
+    'https://www.linkedin.com/posts/example_python-activity-7497753341712789505-abcd',
+])
+```
+
+Reposter profiles can be collected optionally. This opens LinkedIn's repost list and scrolls its
+lazy-loaded contents, so it adds browser interactions and is disabled by default:
+
+```python
+def on_post(post):
+    for reposter in post.reposters:
+        print(reposter.name, reposter.profile_link, reposter.avatar_url)
+
+scraper.on(Events.POST, on_post)
+scraper.scrape_post(
+    'https://www.linkedin.com/feed/update/urn:li:activity:7497753341712789504/',
+    include_reposters=True,
+    reposters_limit=100,
+)
+```
+
+The same options are accepted by `scrape_posts`. Only public reposters visible to the authenticated
+account are returned.
+
 #### Searching posts
 
 `search_posts` accepts either keywords or a full LinkedIn content-search URL. It emits the same

@@ -1,2 +1,2 @@
 from .events import (Events, EventData, EventMetrics, EventSession, EventBegin,
-                     EventNotFound, EventProfileNotFound, ProfileData, PostData)
+                     EventNotFound, EventProfileNotFound, ProfileData, PostData, ReposterData)

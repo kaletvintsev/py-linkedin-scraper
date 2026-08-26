@@ -59,6 +59,13 @@ class ProfileData(NamedTuple):
     education: List[str] = []
 
 
+class ReposterData(NamedTuple):
+    """Public identity of a member who reposted a post."""
+    name: str = ''
+    profile_link: str = ''
+    avatar_url: str = ''
+
+
 class PostData(NamedTuple):
     """Public fields extracted from a member activity page or post search."""
     post_id: str = ''
@@ -71,6 +78,7 @@ class PostData(NamedTuple):
     comments: int = 0
     reposts: int = 0
     image_urls: List[str] = []
+    reposters: List[ReposterData] = []
 
 
 class EventData(NamedTuple):

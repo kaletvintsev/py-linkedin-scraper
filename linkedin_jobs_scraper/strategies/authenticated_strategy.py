@@ -2,7 +2,7 @@ import hashlib
 import traceback
 from datetime import datetime
 from random import uniform
-from typing import NamedTuple
+from typing import List, NamedTuple
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -21,7 +21,7 @@ from ..utils.url import override_query_params
 from ..utils.text import normalize_spaces, clean_applicant_count
 from ..utils.dates import parse_relative_date
 from ..events import (Events, EventData, EventMetrics, EventBegin, EventNotFound,
-                      EventProfileNotFound, ProfileData, PostData)
+                      EventProfileNotFound, ProfileData, PostData, ReposterData)
 from ..exceptions import InvalidCookieException
 
 
@@ -95,6 +95,9 @@ PROFILE_POSTS_WAIT_TIMEOUT = 15
 PROFILE_POSTS_MAX_STALE_SCROLLS = 3
 POST_SEARCH_WAIT_TIMEOUT = 15
 POST_SEARCH_MAX_STALE_SCROLLS = 3
+POST_WAIT_TIMEOUT = 15
+REPOSTERS_WAIT_TIMEOUT = 10
+REPOSTERS_MAX_STALE_SCROLLS = 3
 
 
 class Selectors(NamedTuple):
@@ -299,6 +302,114 @@ EXTRACT_SEARCH_POSTS_SCRIPT = r'''
             image_urls: [...new Set(imageUrls)]
         };
     }).filter(post => post.text || post.post_id);
+'''
+
+
+EXTRACT_SINGLE_POST_SCRIPT = r'''
+    const clean = value => (value || '').replace(/[\n\r\t ]+/g, ' ').trim();
+    const count = value => {
+        const match = clean(value).match(/[\d,.]+/);
+        return match ? Number(match[0].replace(/,/g, '')) || 0 : 0;
+    };
+    const candidates = [...document.querySelectorAll('[role="listitem"]')];
+    const card = candidates.find(element => clean(element.querySelector('h2')?.innerText) === 'Feed post')
+        || document.querySelector('[data-urn^="urn:li:activity:"], [data-urn^="urn:li:share:"]');
+    if (!card) return null;
+
+    const requestedUrl = arguments[0];
+    const urn = card.getAttribute('data-urn') || '';
+    const idMatch = (requestedUrl + ' ' + urn).match(
+        /(?:urn(?::|%3A)li(?::|%3A)(?:activity|share)(?::|%3A)|activity-)(\d+)/i);
+    const author = card.querySelector(
+        '.update-components-actor__meta-link, a[href*="linkedin.com/in/"], '
+        + 'a[href*="linkedin.com/company/"], a[href*="linkedin.com/groups/"]');
+    const authorTitle = card.querySelector('.update-components-actor__title');
+    const menu = card.querySelector('[aria-label^="Open control menu for post by "]');
+    const authorName = menu ? clean(menu.getAttribute('aria-label'))
+        .replace(/^Open control menu for post by /, '') :
+        (authorTitle ? clean(authorTitle.innerText) : clean(author?.innerText));
+    const commentary = card.querySelector(
+        '[data-testid="expandable-text-box"], [data-testid*="commentary"], '
+        + '.update-components-update-v2__commentary, .feed-shared-update-v2__description');
+    const paragraphs = [...card.querySelectorAll('p')]
+        .map(element => clean(element.innerText)).filter(value => value.length > 1);
+    const text = commentary ? clean(commentary.innerText) :
+        (paragraphs.sort((left, right) => right.length - left.length)[0] || '');
+    const dateElement = card.querySelector(
+        'time, .update-components-actor__sub-description, [class*="actor__sub-description"]');
+    const date = dateElement ? clean(dateElement.innerText) :
+        (paragraphs.find(value => /^(?:\d+[smhdwy]|now)\b/i.test(value)) || '');
+    const labels = [...card.querySelectorAll('button, a, span, p')]
+        .map(element => clean((element.getAttribute('aria-label') || '') + ' ' + element.innerText));
+    const metric = expression => count(labels.find(value => expression.test(value)) || '');
+    const images = [...card.querySelectorAll(
+        '.update-components-image img, .update-components-document img, '
+        + 'img[src*="/feedshare-"], img[src*="/articleshare-"], img[src*="/image-shrink_"]')]
+        .map(image => image.currentSrc || image.src || '')
+        .filter(Boolean);
+
+    return {
+        post_id: idMatch ? idMatch[1] : '', link: requestedUrl,
+        author_name: authorName,
+        author_link: author ? (author.href || author.getAttribute('href') || '').split('?')[0] : '',
+        text, date_text: date,
+        reactions: metric(/\b\d[\d,.]*\s+reactions?\b/i),
+        comments: metric(/\b\d[\d,.]*\s+comments?\b/i),
+        reposts: metric(/\b\d[\d,.]*\s+reposts?\b/i),
+        image_urls: [...new Set(images)]
+    };
+'''
+
+
+OPEN_REPOSTERS_SCRIPT = r'''
+    const clean = value => (value || '').replace(/[\n\r\t ]+/g, ' ').trim();
+    const detail = document.querySelector('[data-sdui-screen*="UpdateDetail"]') || document;
+    const cards = [...detail.querySelectorAll('[role="listitem"]')];
+    const card = cards.find(element => clean(element.querySelector('h2')?.innerText) === 'Feed post')
+        || detail.querySelector('[data-urn^="urn:li:activity:"], [data-urn^="urn:li:share:"]');
+    if (!card) return false;
+    const metric = [...card.querySelectorAll('p, span')]
+        .find(element => /^\d[\d,.]*\s+reposts?$/i.test(clean(element.innerText)));
+    if (!metric) return null;
+    return metric.closest('a, button, [role="button"]')
+        || metric.parentElement
+        || metric;
+'''
+
+
+EXTRACT_REPOSTERS_SCRIPT = r'''
+    const clean = value => (value || '').replace(/[\n\r\t ]+/g, ' ').trim();
+    const root = document.querySelector(
+        '[data-sdui-screen="com.linkedin.sdui.flagshipnav.feed.RepostList"]');
+    if (!root) return [];
+    return [...root.querySelectorAll('[role="listitem"]')].map(card => {
+        const marker = [...card.querySelectorAll('p')]
+            .find(element => /\breposted this\s*$/i.test(clean(element.innerText)));
+        const anchor = marker?.querySelector('a[href*="linkedin.com/in/"]');
+        if (!anchor) return null;
+        const profileLink = (anchor.href || anchor.getAttribute('href') || '').split('?')[0];
+        const avatarAnchor = [...card.querySelectorAll('a[href*="/in/"]')].find(element =>
+            (element.href || element.getAttribute('href') || '').split('?')[0] === profileLink
+            && element.querySelector('img'));
+        const avatar = avatarAnchor?.querySelector('img');
+        return {
+            name: clean(anchor.innerText).replace(/\s+reposted this\s*$/i, ''),
+            profile_link: profileLink,
+            avatar_url: avatar ? (avatar.currentSrc || avatar.src || '') : ''
+        };
+    }).filter(Boolean);
+'''
+
+
+SCROLL_REPOSTERS_SCRIPT = r'''
+    const root = document.querySelector(
+        '[data-sdui-screen="com.linkedin.sdui.flagshipnav.feed.RepostList"]');
+    const list = root?.querySelector('[role="list"][data-component-type="LazyColumn"]');
+    const items = list?.querySelectorAll('[role="listitem"]');
+    if (items?.length) items[items.length - 1].scrollIntoView({block: 'end'});
+    const content = root?.closest('[data-testid="dialog-content"]');
+    if (content) content.scrollTop = content.scrollHeight;
+    return items?.length || 0;
 '''
 
 
@@ -1894,6 +2005,104 @@ class AuthenticatedStrategy(Strategy):
             self.scraper.emit(Events.POST, data)
 
         info(tag, f'Processed {min(len(posts), limit)} posts')
+
+    def __scrape_reposters(self, driver: webdriver, limit: int) -> List[ReposterData]:
+        tag = '[reposters]'
+        control = driver.execute_script(OPEN_REPOSTERS_SCRIPT)
+        if not control:
+            warn(tag, 'Reposts control is not available')
+            return []
+        try:
+            driver.execute_script(
+                'arguments[0].scrollIntoView({block: "center"});', control)
+            control.click()
+        except BaseException:
+            driver.execute_script(
+                'arguments[0].dispatchEvent(new MouseEvent("click", '
+                '{bubbles: true, cancelable: true, view: window}));', control)
+        try:
+            WebDriverWait(driver, REPOSTERS_WAIT_TIMEOUT).until(
+                ec.presence_of_element_located((By.CSS_SELECTOR,
+                    '[data-sdui-screen="com.linkedin.sdui.flagshipnav.feed.RepostList"]')))
+        except BaseException:
+            warn(tag, 'Repost list did not open')
+            return []
+
+        reposters = {}
+        stale_scrolls = 0
+        while len(reposters) < limit and stale_scrolls < REPOSTERS_MAX_STALE_SCROLLS:
+            before = len(reposters)
+            for raw in driver.execute_script(EXTRACT_REPOSTERS_SCRIPT) or []:
+                profile_link = raw.get('profile_link', '')
+                if profile_link and profile_link not in reposters:
+                    reposters[profile_link] = ReposterData(
+                        name=normalize_spaces(raw.get('name', '')),
+                        profile_link=profile_link,
+                        avatar_url=raw.get('avatar_url', ''))
+            if len(reposters) >= limit:
+                break
+            stale_scrolls = stale_scrolls + 1 if len(reposters) == before else 0
+            driver.execute_script(SCROLL_REPOSTERS_SCRIPT)
+            sleep(self.scraper.pacer.delay)
+
+        info(tag, f'Processed {min(len(reposters), limit)} reposters')
+        return list(reposters.values())[:limit]
+
+    def scrape_post(self, driver: webdriver, post_url: str,
+                    include_reposters: bool = False, reposters_limit: int = 100) -> None:
+        """Scrape one post from its public permalink."""
+        tag = '[post]'
+        driver.get(HOME_URL)
+        sleep(self.scraper.pacer.delay)
+        if not wait_for_linkedin(driver):
+            warn(tag, 'The browser never landed on LinkedIn, skip')
+            return
+
+        mask_headless_user_agent(driver)
+        has_profile = bool(self.scraper.chrome_user_data_dir)
+        if has_profile:
+            AuthenticatedStrategy.__wait_for_session(driver)
+        if not AuthenticatedStrategy.__is_authenticated_session(driver):
+            if not AuthenticatedStrategy.__authenticate(driver, tag, has_profile):
+                return
+
+        def wait_for_post(current_driver: webdriver) -> bool:
+            try:
+                WebDriverWait(current_driver, POST_WAIT_TIMEOUT).until(
+                    ec.presence_of_element_located((By.CSS_SELECTOR,
+                        '[data-testid="expandable-text-box"], '
+                        '[data-urn^="urn:li:activity:"], [data-urn^="urn:li:share:"], '
+                        '[role="listitem"]')))
+                return True
+            except BaseException:
+                return False
+
+        if not self.__open_and_wait(driver, tag, post_url, wait_for_post):
+            if (AuthenticatedStrategy.__is_session_lost(driver) or
+                    AuthenticatedStrategy.__is_guest_page(driver)):
+                self.scraper.emit(Events.INVALID_SESSION)
+            else:
+                warn(tag, 'Post not found or unavailable')
+            return
+
+        raw = driver.execute_script(EXTRACT_SINGLE_POST_SCRIPT, post_url)
+        if not raw:
+            warn(tag, 'Post data is not present in the rendered page')
+            return
+        reposters = []
+        if include_reposters and raw.get('reposts', 0) > 0:
+            reposters = self.__scrape_reposters(driver, reposters_limit)
+        post_id = raw.get('post_id') or hashlib.sha1(post_url.encode('utf-8')).hexdigest()
+        self.scraper.emit(Events.POST, PostData(
+            post_id=post_id, link=raw.get('link', post_url),
+            author_name=normalize_spaces(raw.get('author_name', '')),
+            author_link=raw.get('author_link', ''),
+            text=normalize_spaces(raw.get('text', '')),
+            date_text=normalize_spaces(raw.get('date_text', '')),
+            reactions=raw.get('reactions', 0), comments=raw.get('comments', 0),
+            reposts=raw.get('reposts', 0), image_urls=raw.get('image_urls', []),
+            reposters=reposters))
+        info(tag, 'Processed')
 
     def search_posts(self, driver: webdriver, search_url: str, limit: int) -> None:
         """Search rendered SDUI content results without relying on generated classes."""
