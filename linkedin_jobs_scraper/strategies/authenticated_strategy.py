@@ -237,6 +237,19 @@ EXTRACT_PROFILE_POSTS_SCRIPT = r'''
             '.update-components-image img[src], .update-components-document img[src]')]
             .map(element => element.currentSrc || element.src)
             .filter(Boolean);
+        const reshared = card.querySelector(
+            '.update-components-mini-update-v2, .feed-shared-update-v2__update-content-wrapper, '
+            + '[data-testid*="reshared"], [data-test-id*="reshared"]');
+        const originalAuthor = reshared ? reshared.querySelector(
+            '.update-components-actor__meta-link, a[href*="/in/"], a[href*="/company/"]') : null;
+        const originalAuthorName = reshared ? reshared.querySelector(
+            '.update-components-actor__title, [data-testid*="actor-name"]') : null;
+        const originalPermalink = reshared ? reshared.querySelector(
+            'a[href*="/feed/update/urn:li:activity:"], a[href*="/posts/"]') : null;
+        const originalUrn = reshared ? (reshared.getAttribute('data-urn') || '') : '';
+        const originalIdMatch = ((originalPermalink ? originalPermalink.href : '') + ' ' + originalUrn)
+            .match(/(?:urn(?::|%3A)li(?::|%3A)(?:activity|share)(?::|%3A)|activity-)(\d+)/i);
+        const isRepost = Boolean(reshared || /\breposted this\b/i.test(date ? date.innerText : ''));
 
         seen.add(idMatch[1]);
         posts.push({
@@ -251,7 +264,14 @@ EXTRACT_PROFILE_POSTS_SCRIPT = r'''
             reactions: metric(/reaction|like/i),
             comments: metric(/comment/i),
             reposts: metric(/repost/i),
-            image_urls: [...new Set(images)]
+            image_urls: [...new Set(images)],
+            is_repost: isRepost,
+            original_author_name: originalAuthorName ? clean(originalAuthorName.innerText) :
+                (originalAuthor ? clean(originalAuthor.innerText || originalAuthor.getAttribute('aria-label')) : ''),
+            original_author_link: originalAuthor ? (originalAuthor.href || '').split('?')[0] : '',
+            original_post_id: originalIdMatch ? originalIdMatch[1] : '',
+            original_post_link: originalPermalink ?
+                (originalPermalink.href || originalPermalink.getAttribute('href') || '').split('?')[0] : ''
         });
     }
 
@@ -2017,7 +2037,12 @@ class AuthenticatedStrategy(Strategy):
                 reactions=raw.get('reactions', 0),
                 comments=raw.get('comments', 0),
                 reposts=raw.get('reposts', 0),
-                image_urls=raw.get('image_urls', []))
+                image_urls=raw.get('image_urls', []),
+                is_repost=raw.get('is_repost', False),
+                original_author_name=normalize_spaces(raw.get('original_author_name', '')),
+                original_author_link=raw.get('original_author_link', ''),
+                original_post_id=raw.get('original_post_id', ''),
+                original_post_link=raw.get('original_post_link', ''))
             self.scraper.emit(Events.POST, data)
 
         info(tag, f'Processed {min(len(posts), limit)} posts')

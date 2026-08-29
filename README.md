@@ -440,6 +440,10 @@ approximate ISO `published_at`,
 reaction/comment/repost counts and media image URLs. Only posts present on the member's activity
 page and visible to the authenticated account can be returned.
 
+For a repost, `is_repost` is true and the original content identity is exposed as
+`original_author_name`, `original_author_link`, `original_post_id` and `original_post_link`
+when LinkedIn renders those fields in the nested post card.
+
 #### Scraping one post
 
 `scrape_post` accepts a LinkedIn `/feed/update/` or `/posts/` permalink and emits one

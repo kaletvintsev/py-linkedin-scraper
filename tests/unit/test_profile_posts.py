@@ -77,3 +77,6 @@ def test_post_extractor_uses_activity_urn_and_semantic_fallbacks():
     assert 'urn:li:activity:' in EXTRACT_PROFILE_POSTS_SCRIPT
     assert '[data-urn^="urn:li:activity:"]' in EXTRACT_PROFILE_POSTS_SCRIPT
     assert '.update-components-update-v2__commentary' in EXTRACT_PROFILE_POSTS_SCRIPT
+    assert '.update-components-mini-update-v2' in EXTRACT_PROFILE_POSTS_SCRIPT
+    assert 'original_author_link' in EXTRACT_PROFILE_POSTS_SCRIPT
+    assert 'original_post_id' in EXTRACT_PROFILE_POSTS_SCRIPT

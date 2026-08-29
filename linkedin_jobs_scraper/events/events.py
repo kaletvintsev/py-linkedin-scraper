@@ -80,6 +80,11 @@ class PostData(NamedTuple):
     reposts: int = 0
     image_urls: List[str] = []
     reposters: List[ReposterData] = []
+    is_repost: bool = False
+    original_author_name: str = ''
+    original_author_link: str = ''
+    original_post_id: str = ''
+    original_post_link: str = ''
 
 
 class EventData(NamedTuple):
