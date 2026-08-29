@@ -74,6 +74,7 @@ class PostData(NamedTuple):
     author_link: str = ''
     text: str = ''
     date_text: str = ''
+    published_at: str = ''
     reactions: int = 0
     comments: int = 0
     reposts: int = 0

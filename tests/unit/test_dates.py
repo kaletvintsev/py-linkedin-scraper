@@ -49,6 +49,17 @@ def test_parse_relative_date_prefix_is_case_insensitive() -> None:
     assert parse_relative_date('REPOSTED 1 week ago', NOW) == '2026-08-16'
 
 
+@pytest.mark.parametrize(('text', 'expected'), [
+    ('15m', '2026-08-23'),
+    ('3h', '2026-08-23'),
+    ('6d', '2026-08-17'),
+    ('2w', '2026-08-09'),
+    ('3mo', '2026-05-25'),
+])
+def test_parse_relative_date_compact_feed_units(text: str, expected: str) -> None:
+    assert parse_relative_date(text, NOW) == expected
+
+
 @pytest.mark.parametrize('text', [
     '',
     'yesterday',

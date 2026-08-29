@@ -423,7 +423,20 @@ scraper.on(Events.POST, on_post)
 scraper.scrape_profile_posts('satya-nadella', limit=20)
 ```
 
+Incremental callers can stop when a previously stored post id is reached and can
+discard older activity without scrolling the entire history:
+
+```python
+scraper.scrape_profile_posts(
+    'satya-nadella',
+    limit=50,
+    stop_post_id='7497753341712789504',
+    published_after='2026-08-22',
+)
+```
+
 `PostData` contains `post_id`, canonical `link`, author name and link, text, displayed date,
+approximate ISO `published_at`,
 reaction/comment/repost counts and media image URLs. Only posts present on the member's activity
 page and visible to the authenticated account can be returned.
 

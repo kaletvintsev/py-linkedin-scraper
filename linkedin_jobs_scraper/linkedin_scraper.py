@@ -1,4 +1,5 @@
 import traceback
+from datetime import datetime
 from inspect import signature
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import quote_plus, urlparse, urlencode
@@ -412,10 +413,21 @@ class LinkedinScraper:
             error(tag, e)
             self.emit(Events.ERROR, str(e) + '\n' + traceback.format_exc())
 
-    def scrape_profile_posts(self, url_or_id: str, limit: int = 10) -> None:
+    def scrape_profile_posts(
+            self, url_or_id: str, limit: int = 10, stop_post_id: str = '',
+            published_after: str = '') -> None:
         """Scrape posts published by a member from their public activity page."""
         if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
             raise ValueError('Parameter limit must be a positive integer')
+        if not isinstance(stop_post_id, str):
+            raise ValueError('Parameter stop_post_id must be a string')
+        if not isinstance(published_after, str):
+            raise ValueError('Parameter published_after must be an ISO 8601 string')
+        if published_after:
+            try:
+                datetime.fromisoformat(published_after.replace('Z', '+00:00'))
+            except ValueError:
+                raise ValueError('Parameter published_after must be an ISO 8601 string') from None
 
         public_id = get_profile_public_id(url_or_id)
         tag = f'[profile-posts:{public_id}]'
@@ -434,7 +446,8 @@ class LinkedinScraper:
                 chrome_user_data_dir=self.chrome_user_data_dir,
                 timeout=self.page_load_timeout)
             try:
-                self._strategy.scrape_profile_posts(driver, public_id, limit)
+                self._strategy.scrape_profile_posts(
+                    driver, public_id, limit, stop_post_id.strip(), published_after.strip())
                 self.__emit_refreshed_session(driver)
             finally:
                 try:

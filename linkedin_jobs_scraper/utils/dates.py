@@ -23,6 +23,10 @@ _TODAY_RE = re.compile(r'\b(just now|\d+\s+(?:minute|hour)s?\s+ago)\b', re.IGNOR
 # "N <unit> ago" where the unit is day/week/month/year.
 _RELATIVE_RE = re.compile(r'(\d+)\s+(day|week|month|year)s?\s+ago', re.IGNORECASE)
 
+# Compact form used in feed cards: ``3h``, ``5d`` or ``2w`` (often followed by
+# a visibility bullet/icon). Months use ``mo`` to stay distinct from minutes.
+_COMPACT_RELATIVE_RE = re.compile(r'\b(\d+)\s*(m|h|d|w|mo|y)\b', re.IGNORECASE)
+
 _UNIT_DAYS = {
     'day': 1,
     'week': DAYS_PER_WEEK,
@@ -54,5 +58,12 @@ def parse_relative_date(text: str, now: datetime) -> str:
         unit = match.group(2).lower()
         days = amount * _UNIT_DAYS[unit]
         return (now - timedelta(days=days)).date().isoformat()
+
+    compact_match = _COMPACT_RELATIVE_RE.search(stripped)
+    if compact_match:
+        amount = int(compact_match.group(1))
+        unit = compact_match.group(2).lower()
+        days_by_unit = {'m': 0, 'h': 0, 'd': 1, 'w': 7, 'mo': 30, 'y': 365}
+        return (now - timedelta(days=amount * days_by_unit[unit])).date().isoformat()
 
     return ''

@@ -247,6 +247,7 @@ EXTRACT_PROFILE_POSTS_SCRIPT = r'''
             author_link: author ? (author.href || '').split('?')[0] : '',
             text,
             date_text: date ? clean(date.innerText) : '',
+            published_at: date ? (date.getAttribute('datetime') || '') : '',
             reactions: metric(/reaction|like/i),
             comments: metric(/comment/i),
             reposts: metric(/repost/i),
@@ -1909,7 +1910,9 @@ class AuthenticatedStrategy(Strategy):
         info(tag, 'Processed')
         self.scraper.emit(Events.PROFILE, data)
 
-    def scrape_profile_posts(self, driver: webdriver, public_id: str, limit: int) -> None:
+    def scrape_profile_posts(
+            self, driver: webdriver, public_id: str, limit: int,
+            stop_post_id: str = '', published_after: str = '') -> None:
         """Scrape posts authored by one member from their recent activity page."""
         tag = f'[profile-posts:{public_id}]'
         # LinkedIn currently renders the Posts collection on ``all``. The seemingly
@@ -1960,10 +1963,22 @@ class AuthenticatedStrategy(Strategy):
         posts_by_id = {}
         previous_count = 0
         stale_scrolls = 0
+        reached_boundary = False
 
-        while len(posts_by_id) < limit and stale_scrolls < PROFILE_POSTS_MAX_STALE_SCROLLS:
+        while (len(posts_by_id) < limit and not reached_boundary and
+               stale_scrolls < PROFILE_POSTS_MAX_STALE_SCROLLS):
             visible_posts = driver.execute_script(EXTRACT_PROFILE_POSTS_SCRIPT)
             for post in visible_posts:
+                if stop_post_id and post['post_id'] == stop_post_id:
+                    reached_boundary = True
+                    break
+                date_text = normalize_spaces(post.get('date_text', ''))
+                post_date = (post.get('published_at', '') or
+                             parse_relative_date(date_text, datetime.now()))
+                post['published_at'] = post_date
+                if published_after and post_date and post_date[:10] < published_after[:10]:
+                    reached_boundary = True
+                    break
                 posts_by_id[post['post_id']] = post
 
             if len(posts_by_id) == previous_count:
@@ -1998,6 +2013,7 @@ class AuthenticatedStrategy(Strategy):
                 author_link=raw.get('author_link', ''),
                 text=normalize_spaces(raw.get('text', '')),
                 date_text=normalize_spaces(raw.get('date_text', '')),
+                published_at=raw.get('published_at', ''),
                 reactions=raw.get('reactions', 0),
                 comments=raw.get('comments', 0),
                 reposts=raw.get('reposts', 0),
