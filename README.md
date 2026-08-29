@@ -435,6 +435,18 @@ scraper.scrape_profile_posts(
 )
 ```
 
+Several profiles can share one browser and authenticated session:
+
+```python
+scraper.scrape_profile_posts_batch([
+    {'url_or_id': 'first-profile', 'limit': 10, 'stop_post_id': '7497753341712789504'},
+    {'url_or_id': 'second-profile', 'limit': 10, 'published_after': '2026-08-22'},
+])
+```
+
+Each emitted `PostData.source_profile_id` identifies the requested profile that produced
+the event, including when the activity itself is a repost authored by somebody else.
+
 `PostData` contains `post_id`, canonical `link`, author name and link, text, displayed date,
 approximate ISO `published_at`,
 reaction/comment/repost counts and media image URLs. Only posts present on the member's activity

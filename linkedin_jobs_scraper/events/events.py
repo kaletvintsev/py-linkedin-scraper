@@ -85,6 +85,7 @@ class PostData(NamedTuple):
     original_author_link: str = ''
     original_post_id: str = ''
     original_post_link: str = ''
+    source_profile_id: str = ''
 
 
 class EventData(NamedTuple):

@@ -80,3 +80,20 @@ def test_post_extractor_uses_activity_urn_and_semantic_fallbacks():
     assert '.update-components-mini-update-v2' in EXTRACT_PROFILE_POSTS_SCRIPT
     assert 'original_author_link' in EXTRACT_PROFILE_POSTS_SCRIPT
     assert 'original_post_id' in EXTRACT_PROFILE_POSTS_SCRIPT
+
+
+def test_scrape_profile_posts_batch_reuses_one_driver(monkeypatch):
+    driver = FakeDriver()
+    monkeypatch.setattr(scraper_module, 'build_driver', lambda **_kwargs: driver)
+    scraper = LinkedinScraper(headless=True, max_workers=1)
+    scraper._strategy.scrape_profile_posts = Mock()
+
+    scraper.scrape_profile_posts_batch([
+        {'url_or_id': 'first', 'limit': 10},
+        {'url_or_id': 'second', 'limit': 10, 'stop_post_id': '123'},
+    ])
+
+    assert scraper._strategy.scrape_profile_posts.call_count == 2
+    assert scraper._strategy.scrape_profile_posts.call_args_list[0].args == (driver, 'first', 10, '', '')
+    assert scraper._strategy.scrape_profile_posts.call_args_list[1].args == (driver, 'second', 10, '123', '')
+    assert driver.closed is True

@@ -2042,7 +2042,8 @@ class AuthenticatedStrategy(Strategy):
                 original_author_name=normalize_spaces(raw.get('original_author_name', '')),
                 original_author_link=raw.get('original_author_link', ''),
                 original_post_id=raw.get('original_post_id', ''),
-                original_post_link=raw.get('original_post_link', ''))
+                original_post_link=raw.get('original_post_link', ''),
+                source_profile_id=public_id)
             self.scraper.emit(Events.POST, data)
 
         info(tag, f'Processed {min(len(posts), limit)} posts')

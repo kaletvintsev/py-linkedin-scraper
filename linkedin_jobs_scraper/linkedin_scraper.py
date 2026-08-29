@@ -465,6 +465,53 @@ class LinkedinScraper:
             error(tag, e)
             self.emit(Events.ERROR, str(e) + '\n' + traceback.format_exc())
 
+    def scrape_profile_posts_batch(self, requests: List[dict]) -> None:
+        """Scrape several member activity pages with one browser session."""
+        if not isinstance(requests, list) or not requests:
+            raise ValueError('Parameter requests must be a non-empty list')
+
+        normalized = []
+        for request in requests:
+            if not isinstance(request, dict):
+                raise ValueError('Every profile posts request must be a dictionary')
+            url_or_id = request.get('url_or_id')
+            limit = request.get('limit', 10)
+            stop_post_id = request.get('stop_post_id', '')
+            published_after = request.get('published_after', '')
+            if not isinstance(url_or_id, str):
+                raise ValueError('Every request must contain string url_or_id')
+            if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
+                raise ValueError('Parameter limit must be a positive integer')
+            if not isinstance(stop_post_id, str) or not isinstance(published_after, str):
+                raise ValueError('Cursor parameters must be strings')
+            if published_after:
+                try:
+                    datetime.fromisoformat(published_after.replace('Z', '+00:00'))
+                except ValueError:
+                    raise ValueError('Parameter published_after must be an ISO 8601 string') from None
+            normalized.append((get_profile_public_id(url_or_id), limit,
+                               stop_post_id.strip(), published_after.strip()))
+
+        try:
+            driver = build_driver(
+                executable_path=self.chrome_executable_path,
+                binary_location=self.chrome_binary_location,
+                options=self.chrome_options,
+                headless=self.headless,
+                chrome_user_data_dir=self.chrome_user_data_dir,
+                timeout=self.page_load_timeout)
+            try:
+                for public_id, limit, stop_post_id, published_after in normalized:
+                    self._strategy.scrape_profile_posts(
+                        driver, public_id, limit, stop_post_id, published_after)
+                self.__emit_refreshed_session(driver)
+            finally:
+                driver.quit()
+        except CallbackException as e:
+            raise e
+        except BaseException as e:
+            self.emit(Events.ERROR, str(e) + '\n' + traceback.format_exc())
+
     def search_posts(self, keywords_or_url: str, limit: int = 10) -> None:
         """Search posts by keywords or by a LinkedIn content-search URL."""
         if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
