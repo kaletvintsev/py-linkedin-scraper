@@ -1,3 +1,4 @@
+import inspect
 from unittest.mock import Mock
 
 import pytest
@@ -5,7 +6,7 @@ import pytest
 import linkedin_jobs_scraper.linkedin_scraper as scraper_module
 from linkedin_jobs_scraper import LinkedinScraper
 from linkedin_jobs_scraper.events import Events, PostData
-from linkedin_jobs_scraper.strategies.authenticated_strategy import EXTRACT_PROFILE_POSTS_SCRIPT
+from linkedin_jobs_scraper.strategies.authenticated_strategy import AuthenticatedStrategy, EXTRACT_PROFILE_POSTS_SCRIPT
 
 
 class FakeDriver:
@@ -97,3 +98,14 @@ def test_scrape_profile_posts_batch_reuses_one_driver(monkeypatch):
     assert scraper._strategy.scrape_profile_posts.call_args_list[0].args == (driver, 'first', 10, '', '')
     assert scraper._strategy.scrape_profile_posts.call_args_list[1].args == (driver, 'second', 10, '123', '')
     assert driver.closed is True
+
+
+def test_profile_posts_strategy_contains_verification_challenge_detection():
+    source = inspect.getsource(
+        AuthenticatedStrategy._AuthenticatedStrategy__is_verification_challenge  # type: ignore[attr-defined]
+    )
+    assert 'verificationCode' in source
+    assert 'one-time-code' in source
+    assert 'securityCode' in source
+    assert 'sent|отправили|отправлен' in source
+    assert 'checkpoint' in source

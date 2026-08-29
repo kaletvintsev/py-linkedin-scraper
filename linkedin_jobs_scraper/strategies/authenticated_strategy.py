@@ -7,7 +7,7 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as ec
-from time import sleep
+from time import monotonic, sleep
 from .strategy import Strategy
 from ..config import Config
 from ..query import Query
@@ -91,7 +91,8 @@ CONTAINER_WAIT_TIMEOUT = 15
 SINGLE_JOB_PANEL_TIMEOUT = 15
 SINGLE_JOB_PANEL_QUIET_PERIOD = 1
 PROFILE_WAIT_TIMEOUT = 15
-PROFILE_POSTS_WAIT_TIMEOUT = 15
+PROFILE_POSTS_WAIT_TIMEOUT = 45
+PROFILE_POSTS_SETTLE_QUIET_PERIOD = 5
 PROFILE_POSTS_MAX_STALE_SCROLLS = 3
 POST_SEARCH_WAIT_TIMEOUT = 15
 POST_SEARCH_MAX_STALE_SCROLLS = 3
@@ -205,26 +206,38 @@ EXTRACT_PROFILE_POSTS_SCRIPT = r'''
         const match = clean(value).match(/[\d,.]+/);
         return match ? Number(match[0].replace(/,/g, '')) || 0 : 0;
     };
-    const cards = [...document.querySelectorAll('[data-urn^="urn:li:activity:"]')];
+    const candidates = [...document.querySelectorAll(
+        '[data-urn^="urn:li:activity:"], main [role="listitem"]')];
+    const cards = candidates.filter(card =>
+        (card.getAttribute('data-urn') || '').includes('urn:li:activity:') ||
+        clean(card.querySelector('h2')?.innerText) === 'Feed post' ||
+        Boolean(card.querySelector(
+            'a[href*="/feed/update/urn:li:activity:"], a[href*="/posts/"]')));
     const seen = new Set();
     const posts = [];
 
     for (const card of cards) {
         const urn = card.getAttribute('data-urn') || '';
-        const idMatch = urn.match(/urn:li:activity:(\d+)/);
-        if (!idMatch || seen.has(idMatch[1])) continue;
         const permalink = card.querySelector(
-            'a[href*="/feed/update/urn:li:activity:"], a[href*="urn:li:activity:"]');
+            'a[href*="/feed/update/urn:li:activity:"], a[href*="urn:li:activity:"], a[href*="/posts/"]');
+        const identity = [urn, card.id || '', card.getAttribute('componentkey') || '',
+            permalink ? (permalink.href || permalink.getAttribute('href') || '') : ''].join(' ');
+        const idMatch = identity.match(
+            /(?:urn(?::|%3A)li(?::|%3A)(?:activity|share)(?::|%3A)|activity-)(\d+)/i);
+        if (!idMatch || seen.has(idMatch[1])) continue;
         const href = permalink ?
             (permalink.href || permalink.getAttribute('href') || '').split('?')[0] :
             `https://www.linkedin.com/feed/update/urn:li:activity:${idMatch[1]}/`;
         const author = card.querySelector(
             '.update-components-actor__meta-link, a[href*="/in/"], a[href*="/company/"]');
-        const authorName = card.querySelector('.update-components-actor__title');
+        const authorName = card.querySelector(
+            '.update-components-actor__title, [data-testid*="actor-name"]');
+        const menu = card.querySelector('[aria-label^="Open control menu for post by "]');
         const date = card.querySelector(
             'time, .update-components-actor__sub-description, [class*="actor__sub-description"]');
         const commentary = card.querySelector(
-            '[data-testid*="commentary"], [data-test-id*="commentary"], '
+            '[data-testid="expandable-text-box"], [data-testid*="commentary"], '
+            + '[data-test-id*="commentary"], '
             + '.update-components-update-v2__commentary, .feed-shared-update-v2__description');
         const paragraphs = [...card.querySelectorAll('p')]
             .map(element => clean(element.innerText)).filter(value => value.length > 1);
@@ -255,7 +268,8 @@ EXTRACT_PROFILE_POSTS_SCRIPT = r'''
         posts.push({
             post_id: idMatch[1],
             link: href,
-            author_name: authorName ? clean(authorName.innerText) :
+            author_name: menu ? clean(menu.getAttribute('aria-label'))
+                .replace(/^Open control menu for post by /, '') : authorName ? clean(authorName.innerText) :
                 (author ? clean(author.innerText || author.getAttribute('aria-label')) : ''),
             author_link: author ? (author.href || '').split('?')[0] : '',
             text,
@@ -551,6 +565,32 @@ class AuthenticatedStrategy(Strategy):
                 ''',
                 Selectors.appShell,
                 Selectors.guestMarkers)
+        except BaseException:
+            return False
+
+    @staticmethod
+    def __is_verification_challenge(driver: webdriver) -> bool:
+        """Return True when LinkedIn asks for an interactive security/code check."""
+
+        try:
+            return bool(driver.execute_script(
+                r'''
+                    const path = (document.location.pathname || '').toLowerCase();
+                    if (/\/(?:checkpoint|challenge)(?:\/|$)/.test(path)) return true;
+                    if (document.querySelector(
+                        'form[action*="checkpoint"], input[name="pin"], input[name="verificationCode"], '
+                        + 'input[autocomplete="one-time-code"], input[name*="otp" i], input[id*="otp" i], '
+                        + 'input[name*="verification" i], input[id*="verification" i], '
+                        + 'input[name*="securityCode" i], input[id*="securityCode" i], '
+                        + '[data-testid*="challenge" i], [data-testid*="verification" i], '
+                        + 'iframe[src*="captcha" i], iframe[title*="challenge" i]')) return true;
+                    const text = (document.body?.innerText || '').replace(/\s+/g, ' ').toLowerCase();
+                    return /(?:enter|type|введите).{0,40}(?:verification|security|confirmation|проверочн|подтвержден).{0,20}(?:code|код)/i.test(text)
+                        || /(?:enter|type|введите).{0,30}(?:the )?(?:code|код)/i.test(text)
+                        || /(?:code|код).{0,50}(?:sent|отправлен)/i.test(text)
+                        || /(?:sent|отправили|отправлен).{0,50}(?:code|код)/i.test(text)
+                        || /(?:security verification|quick security check|verify (?:it'?s you|your identity)|проверка безопасности|подтвердите личность)/i.test(text);
+                '''))
         except BaseException:
             return False
 
@@ -1640,6 +1680,11 @@ class AuthenticatedStrategy(Strategy):
             if not AuthenticatedStrategy.__authenticate(driver, tag, has_profile):
                 return
 
+        if AuthenticatedStrategy.__is_verification_challenge(driver):
+            warn(tag, 'LinkedIn requires an interactive verification code; aborting this session')
+            self.scraper.emit(Events.INVALID_SESSION)
+            raise RuntimeError('LinkedIn requires an interactive verification code')
+
         # The currentJobId render depends on a search context, so the url carries a generic
         # keywords value alongside the requested job id
         url = override_query_params(JOBS_SEARCH_URL, {'currentJobId': job_id, 'keywords': 'engineer'})
@@ -1957,15 +2002,44 @@ class AuthenticatedStrategy(Strategy):
                 return
 
         def wait_for_activity(current_driver: webdriver) -> bool:
+            state = {'text': '', 'changed_at': monotonic()}
+
+            def activity_is_settled(driver: webdriver) -> bool:
+                # Stop waiting immediately when LinkedIn replaces the requested page
+                # with an OTP/checkpoint screen. It is handled as an invalid session
+                # immediately after __open_and_wait returns.
+                if AuthenticatedStrategy.__is_verification_challenge(driver):
+                    return True
+                main = driver.find_elements(By.CSS_SELECTOR, 'main')
+                if not main:
+                    return False
+                if driver.find_elements(
+                        By.CSS_SELECTOR,
+                        'main [data-urn^="urn:li:activity:"], main [role="listitem"] h2'):
+                    return True
+                text = normalize_spaces(main[0].text)
+                if text != state['text']:
+                    state['text'] = text
+                    state['changed_at'] = monotonic()
+                    return False
+                return bool(text) and monotonic() - state['changed_at'] >= PROFILE_POSTS_SETTLE_QUIET_PERIOD
+
             try:
-                WebDriverWait(current_driver, PROFILE_POSTS_WAIT_TIMEOUT).until(
-                    ec.presence_of_element_located(
-                        (By.CSS_SELECTOR, 'main [data-urn^="urn:li:activity:"]')))
+                WebDriverWait(
+                    current_driver,
+                    max(PROFILE_POSTS_WAIT_TIMEOUT, self.scraper.page_load_timeout),
+                ).until(activity_is_settled)
                 return True
             except BaseException:
                 return False
 
-        if not self.__open_and_wait(driver, tag, activity_link, wait_for_activity):
+        activity_loaded = self.__open_and_wait(driver, tag, activity_link, wait_for_activity)
+        if AuthenticatedStrategy.__is_verification_challenge(driver):
+            warn(tag, 'LinkedIn requires an interactive verification code; aborting this session')
+            self.scraper.emit(Events.INVALID_SESSION)
+            raise RuntimeError('LinkedIn requires an interactive verification code')
+
+        if not activity_loaded:
             if AuthenticatedStrategy.__is_throttled(driver) or not is_on_linkedin(driver):
                 warn(tag, f'Could not load activity for profile {public_id}, skip')
                 return
